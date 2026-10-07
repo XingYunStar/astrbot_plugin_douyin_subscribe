@@ -2,7 +2,7 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.25-ff69b4)](https://github.com/AstrBotDevs/AstrBot)
 ![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-aiocqhttp-blue)
-![版本](https://img.shields.io/badge/version-v1.0.0-blue)
+![版本](https://img.shields.io/badge/version-v1.0.1-blue)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 # 抖音订阅推送
