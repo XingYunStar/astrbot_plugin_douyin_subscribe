@@ -281,7 +281,10 @@
     <label class="chk"><input type="checkbox" id="cfg_adapt_interval" /> 账号多时自动拉长间隔</label>
   </div>
   <div class="row" style="margin-top:10px">
-    <label class="chk"><input type="checkbox" id="cfg_silent_first_sync" /> 静默首次同步（不推历史作品）</label>
+    <label class="chk"><input type="checkbox" id="cfg_first_sync_push_latest" /> 首次订阅时推送最近作品</label>
+    <span style="font-size:13px">时间范围(h)</span>
+    <input type="number" id="cfg_first_sync_max_age_hours" style="width:80px" min="0" max="168" step="1"
+           title="仅当最近一条作品发布于 N 小时内才推送；0 表示不限" />
     <label class="chk"><input type="checkbox" id="cfg_admin_only" /> 仅管理员可增删订阅</label>
     <label class="chk"><input type="checkbox" id="cfg_debug" /> 调试日志</label>
   </div>
@@ -744,7 +747,8 @@
       $("cfg_jitter").value = polling.jitter ?? 30;
       $("cfg_max_concurrent").value = polling.max_concurrent ?? 2;
       $("cfg_adapt_interval").checked = !!polling.adapt_interval;
-      $("cfg_silent_first_sync").checked = !!sub.silent_first_sync;
+      $("cfg_first_sync_push_latest").checked = !!sub.first_sync_push_latest;
+      $("cfg_first_sync_max_age_hours").value = sub.first_sync_max_age_hours ?? 12;
       $("cfg_admin_only").checked = !!sub.admin_only;
       $("cfg_debug").checked = !!adv.debug;
       $("cfg_cookie").placeholder = c.cookie || "抖音 Cookie";
@@ -792,7 +796,11 @@
           max_concurrent: +$("cfg_max_concurrent").value,
           adapt_interval: $("cfg_adapt_interval").checked,
         },
-        subscribe: { silent_first_sync: $("cfg_silent_first_sync").checked, admin_only: $("cfg_admin_only").checked },
+        subscribe: {
+          first_sync_push_latest: $("cfg_first_sync_push_latest").checked,
+          first_sync_max_age_hours: +$("cfg_first_sync_max_age_hours").value,
+          admin_only: $("cfg_admin_only").checked,
+        },
         advanced: { debug: $("cfg_debug").checked },
       };
       BOOLS.forEach(k => { payload.content[k] = $("cfg_" + k).checked; });
@@ -814,7 +822,7 @@
     "cfg_video_mode", "cfg_size_limit_mb", "cfg_cover_on_fallback",
     "cfg_prefer_no_watermark", "cfg_delivery",
     "cfg_base_interval", "cfg_jitter", "cfg_max_concurrent", "cfg_adapt_interval",
-    "cfg_silent_first_sync", "cfg_admin_only", "cfg_debug",
+    "cfg_first_sync_push_latest", "cfg_first_sync_max_age_hours", "cfg_admin_only", "cfg_debug",
     "cfg_cookie",
   ];
 

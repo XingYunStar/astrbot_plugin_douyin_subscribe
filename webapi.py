@@ -336,7 +336,7 @@ class PageApi:
             ),
             ("video", ("mode", "cover_on_fallback", "prefer_no_watermark", "delivery")),
             ("polling", ("adapt_interval",)),
-            ("subscribe", ("silent_first_sync", "admin_only")),
+            ("subscribe", ("first_sync_push_latest", "admin_only")),
             ("advanced", ("debug",)),
         ):
             src = body.get(section)
@@ -355,6 +355,7 @@ class PageApi:
             ("polling", "max_concurrent", int),
             ("subscribe", "max_posts_per_check", int),
             ("subscribe", "max_subs_per_session", int),
+            ("subscribe", "first_sync_max_age_hours", int),
             ("content", "desc_max_length", int),
         ):
             src = body.get(section)

@@ -140,17 +140,33 @@ class DouyinSubscribePlugin(Star):
         return str(self._cfg("cookie", default="") or "").strip()
 
     def _rebuild_client(self) -> None:
+        """重建 HTTP 客户端（改 Cookie / 超时 / 调试开关时调用）。
+
+        旧客户端**延迟关闭**：保存配置会立刻走到这里，而此刻轮询或订阅流程
+        可能正握着旧会话发请求，立即 close 会把在途请求掐断、报
+        ``Connector is closed``——实测确实撞到过（订阅时建立基线失败）。
+        """
         cookie = self._cookie()
         timeout = int(self._cfg("polling", "request_timeout", default=20) or 20)
         debug = bool(self._cfg("advanced", "debug", default=False))
-        if self._client:
-            asyncio.create_task(self._client.close())
+        old = self._client
         self._client = DouyinClient(
             cookie, timeout=timeout, debug=debug, logger=logger
         )
         self._builder = PushBuilder(
             self._client, logger=logger, tmp_dir=self.data_dir / "media_tmp"
         )
+        if old is not None:
+            asyncio.create_task(self._close_later(old, 30.0))
+
+    @staticmethod
+    async def _close_later(client: DouyinClient, delay: float) -> None:
+        """等一会儿再关，给在途请求留出跑完的时间。"""
+        try:
+            await asyncio.sleep(delay)
+            await client.close()
+        except Exception:
+            pass
 
     def _client_or_raise(self) -> DouyinClient:
         if not self._cookie():
@@ -446,7 +462,12 @@ class DouyinSubscribePlugin(Star):
         )
 
         # 首次同步：建立去重基线
-        silent = bool(self._cfg("subscribe", "silent_first_sync", default=True))
+        push_latest = bool(
+            self._cfg("subscribe", "first_sync_push_latest", default=False)
+        )
+        max_age_hours = float(
+            self._cfg("subscribe", "first_sync_max_age_hours", default=12) or 0
+        )
         baseline_note = ""
         if not self.store.is_initialized(account.sec_uid):
             try:
@@ -456,26 +477,35 @@ class DouyinSubscribePlugin(Star):
                 posts = await client.fetch_posts(
                     account.sec_uid, limit=max(count, MIN_BASELINE)
                 )
-                # 无论是否静默，都要记录基线，否则下次轮询会把历史作品当成新作品
+                # 无论是否推送，都要记录基线，否则下次轮询会把历史作品当成新作品
                 self.store.mark_seen(account.sec_uid, [p.aweme_id for p in posts])
                 self.store.set_initialized(account.sec_uid, True)
                 baseline_note = f"\n已记录 {len(posts)} 条历史作品作为基线"
 
-                if not silent and posts:
-                    # 关闭静默同步时，把最新几条推给**本次订阅的会话**（不打扰其它订阅者）
-                    recent = sorted(posts, key=lambda p: p.create_time)[
-                        -max(int(self._cfg("subscribe", "max_posts_per_check", default=3) or 1), 1) :
-                    ]
-                    for post in recent:
+                if push_latest and posts:
+                    # 只推**最近的一条**，并且要落在设定的时间范围内——
+                    # 否则订阅一个好久没更新的账号，会把很久以前的老作品当成
+                    # 新作品推出来，看着像诈尸。
+                    latest = max(posts, key=lambda p: p.create_time)
+                    age_hours = max(
+                        (time.time() - float(latest.create_time or 0)) / 3600.0, 0.0
+                    )
+                    if max_age_hours > 0 and age_hours > max_age_hours:
+                        baseline_note += (
+                            f"；最近一条作品发布于 {age_hours:.1f} 小时前，"
+                            f"超出 {max_age_hours:g} 小时范围，未推送"
+                        )
+                    else:
                         try:
-                            await self._push_post(
-                                account.sec_uid, post, only_umo=umo
+                            await self._push_post(account.sec_uid, latest, only_umo=umo)
+                            baseline_note += (
+                                f"；已推送最近一条作品（发布于 {age_hours:.1f} 小时前）"
                             )
                         except Exception as exc:
                             logger.error(f"[抖音订阅] 订阅时推送失败：{exc}")
-                    baseline_note += f"，并已推送最新 {len(recent)} 条"
-                elif silent:
-                    baseline_note += "（静默同步，不会推送）"
+                            baseline_note += f"；推送最近一条失败（{exc}）"
+                elif not push_latest:
+                    baseline_note += "（静默同步，不推送历史作品）"
             except DouyinError as exc:
                 baseline_note = f"\n（建立基线失败：{exc}，将在下次轮询时重试）"
 

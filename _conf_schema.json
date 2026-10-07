@@ -223,11 +223,22 @@
     "type": "object",
     "description": "订阅行为",
     "items": {
-      "silent_first_sync": {
+      "first_sync_push_latest": {
         "type": "bool",
-        "description": "静默首次同步",
-        "hint": "开启后，订阅一个账号时只记录当前作品，不推送历史作品，之后只推新作品。关闭则订阅瞬间会把最新若干条发出来（可能刷屏）。",
-        "default": true
+        "description": "首次订阅时推送最近作品",
+        "hint": "开启后，订阅一个抖音账号时会先把 TA **最近的一条**作品推给你，方便立刻确认订阅是否生效。关闭则只静默记录基线，不推送任何历史作品。\n\n无论开不开，订阅时都会记录历史作品作为去重基线——不会因为开启它而把老作品在后续轮询里重复推出来。",
+        "default": false
+      },
+      "first_sync_max_age_hours": {
+        "type": "int",
+        "description": "首次推送的时间范围（小时）",
+        "hint": "仅当上面那条「最近作品」发布于 N 小时以内时才推送。默认 12 小时。\n\n这个范围是必要的：如果订阅一个很久没更新的账号，最近一条可能是几个月前的——不设范围就会把老作品当成新作品推出来，看着像诈尸。设为 0 表示不限时间。",
+        "slider": {
+          "min": 0,
+          "max": 168,
+          "step": 1
+        },
+        "default": 12
       },
       "first_sync_max_posts": {
         "type": "int",
