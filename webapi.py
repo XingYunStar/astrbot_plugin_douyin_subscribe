@@ -113,6 +113,7 @@ class PageApi:
             ("/status", self.page_status, ["GET"], "插件运行状态"),
             ("/config", self.page_get_config, ["GET"], "读取插件配置"),
             ("/config", self.page_save_config, ["POST"], "保存插件配置"),
+            ("/cookie", self.page_save_cookie, ["POST"], "保存并验证抖音 Cookie"),
             ("/subs", self.page_subs, ["GET"], "订阅列表"),
             ("/sessions", self.page_sessions, ["GET"], "可用会话列表"),
             ("/groups", self.page_groups, ["GET"], "拉取机器人群列表"),
@@ -305,6 +306,52 @@ class PageApi:
             raw = str(cfg.get("cookie") or "")
             cfg["cookie"] = "" if not raw else f"****（已配置，{len(raw)} 字符）"
         return self._ok(cfg)
+
+    async def page_save_cookie(self):
+        """单独保存抖音 Cookie，并**立即验证一次**。
+
+        抖音 Cookie 长达 4000+ 字符，不适合跟着表单自动保存（每次粘贴都会触发
+        写盘 + 重建客户端）。这里给一个专用入口：保存后立刻打一次 ``profile/self``，
+        把「存了但其实是失效的」这种最恼人的情况当场暴露出来。
+        """
+        from quart import request as quart_request
+
+        body = await quart_request.get_json(silent=True) or {}
+        cookie = str(body.get("cookie") or "").strip()
+        if not cookie:
+            return self._fail("Cookie 不能为空")
+
+        # 基本形状检查：缺了这两个关键字段，连签名都生成不出来
+        lower = cookie.lower()
+        if "sessionid" not in lower:
+            return self._fail(
+                "这看起来不像完整的抖音 Cookie：缺少 sessionid。"
+                "请按 F12 → Network → 任意请求 → 复制完整 Cookie 请求头。"
+            )
+        if "uifid" not in lower:
+            return self._fail(
+                "这看起来不像完整的抖音 Cookie：缺少 UIFID。"
+                "签名所需的 uifid 要从它里面取，缺了就完全没法工作。"
+            )
+
+        plugin = self.plugin
+        try:
+            plugin.config["cookie"] = cookie
+            if hasattr(plugin.config, "save_config"):
+                plugin.config.save_config()
+        except Exception as exc:
+            return self._fail(f"写入配置失败：{exc}")
+
+        plugin._rebuild_client()
+        try:
+            me = await plugin._client_or_raise().fetch_self()
+        except DouyinError as exc:
+            return self._fail(f"Cookie 已保存，但验证失败：{exc}")
+
+        return self._ok(
+            {"account": me.display, "length": len(cookie), "ok": True},
+            f"Cookie 有效，登录账号：{me.display}",
+        )
 
     async def page_save_config(self):
         """保存页面可编辑的配置项。"""

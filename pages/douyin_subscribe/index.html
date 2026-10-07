@@ -147,6 +147,13 @@
   .savestate{font-size:12px;color:var(--muted);margin-left:auto;display:flex;align-items:center;gap:6px}
   .savestate.saving{color:var(--warn)}
   .savestate.saved{color:var(--ok)}
+  .cookie-status{font-size:13px;line-height:1.9;display:flex;flex-wrap:wrap;gap:6px 18px}
+  .cookie-status .kv{color:var(--muted)}
+  .cookie-status .kv b{color:var(--text);font-weight:600}
+  .cookiebox{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--border);
+    border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;line-height:1.5;
+    font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical;outline:none;word-break:break-all}
+  .cookiebox:focus{border-color:var(--accent)}
   /* 全局 Toast：无论页面滚到哪里，操作结果都看得见 */
   #toasts{position:fixed;top:16px;right:16px;z-index:9999;display:flex;
     flex-direction:column;gap:8px;max-width:min(420px,90vw);pointer-events:none}
@@ -168,6 +175,24 @@
 
 <h1>抖音订阅推送</h1>
 <div class="sub">搜索账号一键订阅 · 选择机器人与群号绑定推送目标 · 新作品自动推送</div>
+
+<!-- ============ 抖音 Cookie（放最上面：它是前置条件，没它什么都不工作）============ -->
+<div class="card" id="cookieCard">
+  <h2>抖音 Cookie <span class="badge warn" id="cookieBadge">读取中</span>
+    <button class="ghost sm" id="btnToggleCookie" style="margin-left:auto">修改</button>
+  </h2>
+  <div id="cookieStatusLine" class="cookie-status"></div>
+  <div id="cookieEditor" class="hide" style="margin-top:12px">
+    <textarea id="cfg_cookie" class="cookiebox" rows="5" spellcheck="false"
+      placeholder="把完整的 douyin.com Cookie 粘到这里&#10;（浏览器 F12 → Network → 任意请求 → 复制 Cookie 请求头，约 4000 字符）"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="btnSaveCookie">保存并验证</button>
+      <button class="ghost" id="btnClearCookie">清空</button>
+      <span class="savestate" id="cookieState"></span>
+    </div>
+  </div>
+  <div class="note" id="cookieNote" style="margin-top:8px">读取中…</div>
+</div>
 
 <!-- ============ 状态 ============ -->
 <div class="card">
@@ -289,10 +314,10 @@
     <label class="chk"><input type="checkbox" id="cfg_debug" /> 调试日志</label>
   </div>
   <div class="row" style="margin-top:14px">
-    <input type="text" id="cfg_cookie" placeholder="抖音 Cookie（留空则不修改；已配置时显示掩码）" />
     <span class="savestate" id="saveState"></span>
   </div>
-  <div class="note">所有改动<b>即时生效</b>，无需点保存。Cookie 在输入框失去焦点后自动保存。</div>
+  <div class="note">以上改动<b>即时生效</b>，无需点保存。</div>
+
 </div>
 
 <!-- ============ 推送效果实时预览（在配置下方，按配置渲染）============ -->
@@ -751,7 +776,7 @@
       $("cfg_first_sync_max_age_hours").value = sub.first_sync_max_age_hours ?? 12;
       $("cfg_admin_only").checked = !!sub.admin_only;
       $("cfg_debug").checked = !!adv.debug;
-      $("cfg_cookie").placeholder = c.cookie || "抖音 Cookie";
+      setCookieNote(c.cookie || "");
     } catch (e) {
       setSaveState("✗ 读取配置失败：" + (e.message || e), "saving");
     } finally {
@@ -761,6 +786,58 @@
 
   let saveTimer = null;
   let suppressAutoSave = false;
+
+  let cookieConfigured = false;
+
+  // 已配置就默认折叠，只留一行状态——置顶也不占地方；
+  // 没配置就默认展开，免得用户还要多点一下才发现要填。
+  function setCookieEditorOpen(open) {
+    $("cookieEditor").classList.toggle("hide", !open);
+    $("btnToggleCookie").textContent = open ? "收起" : "修改";
+  }
+
+  function setCookieNote(placeholderText) {
+    cookieConfigured = !!placeholderText;
+    const badge = $("cookieBadge");
+    badge.className = "badge " + (cookieConfigured ? "ok" : "err");
+    badge.textContent = cookieConfigured ? "已配置" : "未配置";
+
+    $("cookieStatusLine").innerHTML = cookieConfigured
+      ? `<span class="kv">状态：<b>${esc(placeholderText)}</b></span>`
+      : `<span class="kv">状态：<b>尚未配置</b> —— 不填 Cookie 插件无法工作</span>`;
+
+    $("cookieNote").textContent = cookieConfigured
+      ? "需要更换时点右上角「修改」，粘贴新 Cookie 后点「保存并验证」。"
+      : "浏览器 F12 → Network → 任意请求 → 复制完整 Cookie 请求头，粘贴到下方后点「保存并验证」。";
+    setCookieEditorOpen(!cookieConfigured);
+  }
+
+  function setCookieState(text, cls) {
+    const el = $("cookieState");
+    el.textContent = text;
+    el.className = "savestate" + (cls ? " " + cls : "");
+  }
+
+  async function saveCookie() {
+    const val = $("cfg_cookie").value.trim();
+    if (!val) { setCookieState("✗ 请先粘贴 Cookie", "saving"); return; }
+    const btn = $("btnSaveCookie");
+    btn.disabled = true;
+    setCookieState(`● 保存并验证中…（${val.length} 字符）`, "saving");
+    try {
+      const d = await bridge.apiPost("cookie", { cookie: val });
+      const acc = (d && d.account) || "";
+      setCookieState(`✓ 已保存并验证通过${acc ? "：" + acc : ""}`, "saved");
+      toast("✅ Cookie 已生效", acc ? `登录账号：${acc}` : "", "ok");
+      $("cfg_cookie").value = "";
+      setCookieEditorOpen(false);
+      loadStatus();
+      loadConfig();
+    } catch (e) {
+      setCookieState("✗ " + (e.message || e), "saving");
+      toast("Cookie 保存失败", String(e.message || e), "err", 8000);
+    } finally { btn.disabled = false; }
+  }
 
   function setSaveState(text, cls) {
     $("saveState").textContent = text;
@@ -804,11 +881,8 @@
         advanced: { debug: $("cfg_debug").checked },
       };
       BOOLS.forEach(k => { payload.content[k] = $("cfg_" + k).checked; });
-      const cookie = $("cfg_cookie").value.trim();
-      if (cookie) payload.cookie = cookie;
 
       await bridge.apiPost("config", payload);
-      $("cfg_cookie").value = "";
       setSaveState("✓ 已保存", "saved");
       setTimeout(() => { if ($("saveState").classList.contains("saved")) setSaveState(""); }, 2500);
     } catch (e) {
@@ -823,7 +897,6 @@
     "cfg_prefer_no_watermark", "cfg_delivery",
     "cfg_base_interval", "cfg_jitter", "cfg_max_concurrent", "cfg_adapt_interval",
     "cfg_first_sync_push_latest", "cfg_first_sync_max_age_hours", "cfg_admin_only", "cfg_debug",
-    "cfg_cookie",
   ];
 
   function bindAutoSave() {
@@ -844,6 +917,11 @@
       const badge = $("statusBadge");
       if (d.cookie_ok) { badge.className = "badge ok"; badge.textContent = "运行中"; }
       else { badge.className = "badge err"; badge.textContent = d.cookie_configured ? "Cookie 异常" : "未配置 Cookie"; }
+      // Cookie 卡片顶部用更准的「有效 / 已失效」，而不是笼统的「已配置」
+      const cb = $("cookieBadge");
+      if (d.cookie_ok) { cb.className = "badge ok"; cb.textContent = "有效"; }
+      else if (d.cookie_configured) { cb.className = "badge err"; cb.textContent = "已失效"; }
+      else { cb.className = "badge err"; cb.textContent = "未配置"; }
       const loginPic = d.login_avatar_data || d.login_avatar || "";
       const loginCell = `<div class="stat"><div class="k">登录账号</div>`
         + `<div class="v" style="display:flex;align-items:center;gap:7px">`
@@ -909,6 +987,21 @@
     $("pvUseCfg").addEventListener("change", e =>
       $("pvOverride").classList.toggle("hide", e.target.checked));
     bindAutoSave();
+    $("btnToggleCookie").addEventListener("click", () => {
+      const willOpen = $("cookieEditor").classList.contains("hide");
+      setCookieEditorOpen(willOpen);
+      if (willOpen) $("cfg_cookie").focus();
+    });
+    $("btnSaveCookie").addEventListener("click", saveCookie);
+    $("btnClearCookie").addEventListener("click", () => {
+      $("cfg_cookie").value = "";
+      setCookieState("");
+      $("cfg_cookie").focus();
+    });
+    // Ctrl/Cmd + Enter 快捷保存
+    $("cfg_cookie").addEventListener("keydown", ev => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") saveCookie();
+    });
     $("btnRefreshSubs").onclick = () => { loadSubs(); loadSessions(); };
     $("btnCheck").onclick = async () => {
       const b = $("btnCheck"); b.disabled = true; b.textContent = "检查中…";

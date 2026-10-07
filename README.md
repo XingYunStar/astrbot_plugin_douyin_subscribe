@@ -2,7 +2,7 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.25-ff69b4)](https://github.com/AstrBotDevs/AstrBot)
 ![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-aiocqhttp-blue)
-![版本](https://img.shields.io/badge/version-v1.0.2-blue)
+![版本](https://img.shields.io/badge/version-v1.0.3-blue)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 # 抖音订阅推送
@@ -85,7 +85,12 @@
 
 1. 浏览器登录 <https://www.douyin.com>；
 2. `F12` → `Network` → 任意请求 → 复制完整的 `Cookie` 请求头；
-3. 粘贴到插件配置的「抖音 Cookie」。
+3. 粘贴到 **WebUI 页面顶部的「抖音 Cookie」卡片**（多行文本框，粘贴后点「保存并验证」）。
+
+   > [!TIP]
+   > 也可以填在 AstrBot 的**插件配置**里，两边都能用。WebUI 那个入口更适合长 Cookie：
+   > 所见即所得，而且**保存后会当场打一次接口验证**——有效期、登录账号立刻告诉你，
+   > 不用等下一次轮询失败才发现填错了。
 
 签名所需的 `uifid` 会自动从 Cookie 的 `UIFID` 字段提取。**不需要导出浏览器密钥，也不需要装 Node.js。**
 
@@ -249,6 +254,7 @@ docker exec <机器人容器名> curl -s -o /dev/null -w "%{http_code}\n" http:/
 
 | 区块 | 能做什么 |
 | --- | --- |
+| 抖音 Cookie | 页面**最顶部**。多行文本框粘贴完整 Cookie，点「保存并验证」会立刻探测有效性并显示登录账号 |
 | ① 搜索账号 | 输入昵称 / 抖音号 / 主页链接搜索，结果卡片带头像；点「订阅到此目标」或「预览作品」 |
 | ② 推送到哪里 | 选机器人 → **自动拉取群列表（带头像）** → 点群名生成推送目标；或直接选已有会话 |
 | 已订阅账号 | 查看全部订阅（含会话头像、账号头像、已记录条数、失败次数），可测试推送 / 预览 / 取消 |
