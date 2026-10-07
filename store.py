@@ -51,6 +51,7 @@ class SubscriptionStore:
             "version": SCHEMA_VERSION,
             "accounts": {},
             "sessions": {},
+            "timing_sig": None,
         }
         self._loaded = False
 
@@ -72,7 +73,12 @@ class SubscriptionStore:
                 os.replace(self.path, backup)
             except OSError:
                 pass
-            self._data = {"version": SCHEMA_VERSION, "accounts": {}, "sessions": {}}
+            self._data = {
+                "version": SCHEMA_VERSION,
+                "accounts": {},
+                "sessions": {},
+                "timing_sig": None,
+            }
             self._loaded = True
             return
 
@@ -80,6 +86,7 @@ class SubscriptionStore:
             "version": raw.get("version", SCHEMA_VERSION),
             "accounts": raw.get("accounts") or {},
             "sessions": raw.get("sessions") or {},
+            "timing_sig": raw.get("timing_sig"),
         }
         # 修正历史数据里可能缺失的字段
         for state in self._data["accounts"].values():
@@ -204,6 +211,45 @@ class SubscriptionStore:
             for sec, state in self._data["accounts"].items()
             if float(state.get("next_check", 0)) <= now
         ]
+
+    # -- 重新计时 -----------------------------------------------------------
+
+    def timing_signature(self) -> str | None:
+        """上一次生效过的「轮询 / 订阅」配置指纹，老存档可能没有。"""
+        return self._data.get("timing_sig")
+
+    def set_timing_signature(self, sig: str) -> None:
+        self._data["timing_sig"] = sig
+
+    def retime_accounts(
+        self, interval: float, *, now: float | None = None, skip_failing: bool = True
+    ) -> tuple[int, int]:
+        """按新的间隔给所有账号重新排期。
+
+        两个刻意的设计：
+
+        * **错峰**：把 n 个账号均匀铺在一个 interval 内，而不是统统设成
+          ``now + interval``——后者会让所有账号在同一时刻到点、集中发请求，
+          抖音风控对突发很敏感，容易吃 403。
+        * **不提前退避中的账号**：``fail_count > 0`` 的账号保持原有时间，
+          否则刚改完配置就把正在退避（多半是被风控）的账号拉起来重试，
+          只会加重风控。
+
+        返回 ``(已重新排期的账号数, 因退避而保持原样的账号数)``。
+        """
+        now = time.time() if now is None else now
+        interval = max(float(interval), 1.0)
+        secs = list(self._data["accounts"])
+        total = max(len(secs), 1)
+        retimed = kept = 0
+        for i, sec in enumerate(secs):
+            state = self._account(sec)
+            if skip_failing and int(state.get("fail_count", 0) or 0) > 0:
+                kept += 1
+                continue
+            state["next_check"] = int(now + interval * (i + 1) / total)
+            retimed += 1
+        return retimed, kept
 
     # -- 订阅关系 -----------------------------------------------------------
 

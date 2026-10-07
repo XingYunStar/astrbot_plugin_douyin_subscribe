@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import time
 from typing import Any
@@ -43,6 +44,28 @@ TICK = 20.0
 
 #: 首次同步时至少拉取的作品数，保证去重基线足够。
 MIN_BASELINE = 20
+
+#: 这些配置一变，就说明用户调过「轮询 / 订阅」，需要给所有账号重新计时。
+#: 只列真正影响节奏的键——改「推送内容」「视频推送」不该惊动排期。
+TIMING_KEYS: dict[str, tuple[str, ...]] = {
+    "polling": (
+        "base_interval",
+        "jitter",
+        "adapt_interval",
+        "single_round_max_wait",
+        "max_concurrent",
+        "request_timeout",
+        "error_backoff",
+    ),
+    "subscribe": (
+        "first_sync_push_latest",
+        "first_sync_max_age_hours",
+        "first_sync_max_posts",
+        "max_posts_per_check",
+        "max_subs_per_session",
+        "admin_only",
+    ),
+}
 
 
 def _is_group_umo(umo: str) -> bool:
@@ -99,6 +122,8 @@ class DouyinSubscribePlugin(Star):
         )
         if not self._cookie():
             logger.warning("[抖音订阅] 尚未配置 Cookie，轮询不会产生任何结果")
+        # 保存配置会热重载插件，借这个时机检测「轮询/订阅」有没有被改过
+        self.apply_timing_change()
 
     async def terminate(self) -> None:
         """插件停用或重载时调用。必须幂等且不抛异常。"""
@@ -210,6 +235,51 @@ class DouyinSubscribePlugin(Star):
         if jitter <= 0:
             return interval
         return interval + random.uniform(0, jitter)
+
+    # ------------------------------------------------------------------
+    # 配置变更后重新计时
+    # ------------------------------------------------------------------
+
+    def _timing_signature(self) -> str:
+        """「轮询 / 订阅」相关配置的指纹，用来判断用户有没有调过节奏参数。"""
+        sig: dict[str, Any] = {
+            group: {key: self._cfg(group, key) for key in keys}
+            for group, keys in TIMING_KEYS.items()
+        }
+        sig["enabled"] = bool(self._cfg("enabled", default=True))
+        return json.dumps(sig, sort_keys=True, ensure_ascii=False)
+
+    def apply_timing_change(self, *, persist: bool = True) -> int:
+        """配置改过就给所有账号重新计时，返回被重新排期的账号数。
+
+        保存插件配置时，AstrBot 原生配置页会热重载插件、本插件自己的页面
+        只写盘，两条路径最后都会走到这里——对用户来说就是「一改配置，
+        倒计时按新参数重新开始」。
+
+        首次运行（老存档里没有指纹）只记录指纹、不重新计时，否则升级后
+        第一次启动就会把所有账号集中拉起来检查一遍。
+        """
+        sig = self._timing_signature()
+        old = self.store.timing_signature()
+        if old == sig:
+            return 0
+
+        self.store.set_timing_signature(sig)
+        if old is None or not self.store.all_accounts():
+            if persist:
+                self.store.save()
+            return 0
+
+        interval = self._interval_for(len(self.store.all_accounts()))
+        retimed, kept = self.store.retime_accounts(interval)
+        logger.info(
+            f"[抖音订阅] 检测到轮询/订阅配置变化，已为 {retimed} 个账号重新计时"
+            f"（新间隔约 {interval:.0f} 秒，错峰排开）"
+            + (f"；{kept} 个处于退避中的账号保持原时间" if kept else "")
+        )
+        if persist:
+            self.store.save()
+        return retimed
 
     async def _poll_loop(self) -> None:
         """主循环：不断检查到点的账号。"""

@@ -436,6 +436,12 @@ class PageApi:
         except Exception:
             pass
 
+        # 「轮询 / 订阅」被改过就给所有账号重新计时
+        try:
+            plugin.apply_timing_change()
+        except Exception as exc:
+            logger.warning(f"[抖音订阅] 重新计时失败：{exc}")
+
         return self._ok({"changed": changed}, "已保存")
 
     async def page_subs(self):
