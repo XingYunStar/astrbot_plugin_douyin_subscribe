@@ -62,7 +62,14 @@ def _shrink_image(body: bytes, mime: str) -> tuple[bytes, str]:
     """把头像缩到 ``_AVATAR_PX`` 见方并转 JPEG，返回 (字节, mime)。
 
     页面上头像只显示 26~44px，原图动辄 5~8KB；缩图后单个约 1~2KB，
-    230 个群的接口响应从 ~1.4MB 降到 ~0.4MB。失败则原样返回。
+    230 个群的接口响应从 ~1.4MB 降到 ~0.4MB。
+
+    注意：只要原图大于目标尺寸就**一定**返回缩图，不再拿字节数做取舍。
+    抖音 CDN 的图本来就用标准量化表压得很狠（接近 quality 50），把它缩到
+    64px 再按 q85 重编码，体积反而可能变大；早先据此回退成原图，导致同一个
+    接口里头像尺寸在 64×64 和 100×100 之间跳，前端表现不一致。
+    这里改成逐档降质，取第一个比原图小的一档；都不行也仍用缩图——尺寸一致
+    比省那点字节更重要。
     """
     try:
         import io
@@ -71,13 +78,20 @@ def _shrink_image(body: bytes, mime: str) -> tuple[bytes, str]:
 
         with PILImage.open(io.BytesIO(body)) as img:
             img = img.convert("RGB") if img.mode not in ("RGB", "L") else img
-            if max(img.size) > _AVATAR_PX:
-                img.thumbnail((_AVATAR_PX, _AVATAR_PX), PILImage.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=85, optimize=True)
-            out = buf.getvalue()
-        if out and len(out) < len(body):
-            return out, "image/jpeg"
+            if max(img.size) <= _AVATAR_PX:
+                return body, mime  # 本来就不大，没必要动
+            img.thumbnail((_AVATAR_PX, _AVATAR_PX), PILImage.LANCZOS)
+            best: bytes | None = None
+            for quality in (85, 75, 65):
+                buf = io.BytesIO()
+                img.save(buf, "JPEG", quality=quality, optimize=True)
+                out = buf.getvalue()
+                if best is None or len(out) < len(best):
+                    best = out
+                if len(out) < len(body):
+                    return out, "image/jpeg"
+            if best:
+                return best, "image/jpeg"
     except Exception:
         pass
     return body, mime
