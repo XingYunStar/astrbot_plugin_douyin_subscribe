@@ -1,0 +1,9 @@
+# 抖音订阅推送插件依赖
+#
+# 本插件不依赖任何第三方签名库：x-secsdk-web-signature 由标准库 hashlib 计算，
+# 不需要 Node.js，也不携带任何第三方 JS。
+#
+# requests 用于下载图床内容：抖音图床（*.douyinpic.com）在 TLS 指纹层面拒绝
+# aiohttp（同 URL 同请求头下 aiohttp 得到 403、requests 得到 200），因此下载
+# 媒体时需要它作为兜底通道。AstrBot 环境本身已自带 requests，这里显式声明。
+requests>=2.28

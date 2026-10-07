@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>抖音订阅推送</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --border:#e3e5e9; --text:#1f2329;
+    --muted:#8a9099; --accent:#2f6bff; --accent-soft:#eaf0ff;
+    --ok:#12a150; --warn:#c9820a; --err:#d92d20; --bubble:#fff;
+  }
+  body.dark{
+    --bg:#16181d; --card:#1f2228; --border:#2e323a; --text:#e6e8eb;
+    --muted:#8b939e; --accent:#5b8bff; --accent-soft:#1e2637; --bubble:#252932;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px;background:var(--bg);color:var(--text);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  .card h2{font-size:14px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .stat{background:var(--accent-soft);border-radius:8px;padding:10px 12px}
+  .stat .k{font-size:11px;color:var(--muted)}
+  .stat .v{font-size:16px;font-weight:600;margin-top:2px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input[type=text],input[type=number],select{
+    padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);
+    color:var(--text);font-size:13px;outline:none}
+  input[type=text]{flex:1;min-width:200px}
+  input:focus,select:focus{border-color:var(--accent)}
+  button{padding:8px 16px;border:0;border-radius:7px;background:var(--accent);color:#fff;
+    font-size:13px;cursor:pointer;white-space:nowrap}
+  button:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+  button.sm{padding:4px 10px;font-size:12px}
+  button.danger{background:transparent;color:var(--err);border:1px solid var(--err)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px}
+  .badge.ok{background:rgba(18,161,80,.14);color:var(--ok)}
+  .badge.err{background:rgba(217,45,32,.14);color:var(--err)}
+  .badge.warn{background:rgba(201,130,10,.16);color:var(--warn)}
+  label.chk{display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;
+    padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg)}
+  label.chk input{accent-color:var(--accent);width:15px;height:15px}
+  .msg{padding:9px 12px;border-radius:7px;font-size:13px;margin-top:10px;display:none}
+  .msg.show{display:block}
+  .msg.err{background:rgba(217,45,32,.1);color:var(--err)}
+  .msg.ok{background:rgba(18,161,80,.1);color:var(--ok)}
+  .chat{background:var(--bg);border-radius:10px;padding:14px}
+  .bubble{background:var(--bubble);border:1px solid var(--border);border-radius:10px;
+    padding:12px;max-width:560px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .bubble + .bubble{margin-top:10px}
+  .bubble .txt{white-space:pre-wrap;word-break:break-word;font-size:13px;margin-bottom:8px}
+  .bubble .txt:empty{display:none}
+  .imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-top:6px}
+  .imgs img{width:100%;border-radius:6px;display:block;background:var(--bg)}
+  video{width:100%;max-width:340px;border-radius:8px;display:block;margin-top:6px;background:#000}
+  .filebox{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--border);
+    border-radius:8px;background:var(--bg);margin-top:6px;font-size:13px}
+  .meta{font-size:11px;color:var(--muted);margin-top:6px}
+  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  .warnbox{font-size:12px;line-height:1.75;color:var(--text);background:rgba(201,130,10,.10);
+    border:1px solid rgba(201,130,10,.35);border-radius:8px;padding:10px 12px;margin-top:12px}
+  .warnbox b{color:var(--warn)}
+  .hide{display:none!important}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:500}
+  .avatar{width:22px;height:22px;border-radius:50%;vertical-align:middle;margin-right:6px;background:var(--bg);object-fit:cover}
+  .results{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-top:12px}
+  .rcard{border:1px solid var(--border);border-radius:9px;padding:12px;background:var(--bg);display:flex;gap:10px;align-items:flex-start}
+  .rcard img.av{width:44px;height:44px;border-radius:50%;flex:0 0 44px;object-fit:cover;background:var(--card)}
+  .rcard .info{flex:1;min-width:0}
+  .rcard .nm{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rcard .id{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rcard .act{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .targetbar{background:var(--accent-soft);border-radius:8px;padding:10px 12px;font-size:12px;
+    margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .targetbar b{color:var(--accent)}
+  /* 附加信息五项的分色（浅色底），配置项与预览渲染共用同一套 */
+  :root{
+    --c-author:#2f6bff; --bg-author:rgba(47,107,255,.13);
+    --c-desc:#0f9d58;   --bg-desc:rgba(15,157,88,.14);
+    --c-time:#8250df;   --bg-time:rgba(130,80,223,.14);
+    --c-link:#c9820a;   --bg-link:rgba(201,130,10,.16);
+    --c-atall:#d92d20;  --bg-atall:rgba(217,45,32,.12);
+    --c-warn:#c9820a;   --bg-warn:rgba(201,130,10,.16);
+  }
+  body.dark{
+    --bg-author:rgba(91,139,255,.20); --bg-desc:rgba(15,157,88,.22);
+    --bg-time:rgba(150,110,240,.22);  --bg-link:rgba(201,130,10,.24);
+    --bg-atall:rgba(217,45,32,.22);   --bg-warn:rgba(201,130,10,.24);
+  }
+  .k-author{color:var(--c-author)} .k-desc{color:var(--c-desc)}
+  .k-time{color:var(--c-time)}     .k-link{color:var(--c-link)}
+  .k-atall{color:var(--c-atall)}   .k-warn{color:var(--c-warn)}
+  label.chk.f-author{background:var(--bg-author);border-color:rgba(47,107,255,.35)}
+  label.chk.f-desc{background:var(--bg-desc);border-color:rgba(15,157,88,.35)}
+  label.chk.f-time{background:var(--bg-time);border-color:rgba(130,80,223,.35)}
+  label.chk.f-link{background:var(--bg-link);border-color:rgba(201,130,10,.40)}
+  label.chk.f-atall{background:var(--bg-atall);border-color:rgba(217,45,32,.35)}
+  label.chk.f-author:has(input:checked){box-shadow:inset 0 0 0 1px var(--c-author)}
+  label.chk.f-desc:has(input:checked){box-shadow:inset 0 0 0 1px var(--c-desc)}
+  label.chk.f-time:has(input:checked){box-shadow:inset 0 0 0 1px var(--c-time)}
+  label.chk.f-link:has(input:checked){box-shadow:inset 0 0 0 1px var(--c-link)}
+  label.chk.f-atall:has(input:checked){box-shadow:inset 0 0 0 1px var(--c-atall)}
+  /* 预览里逐行按字段上色 */
+  .bubble .pline{border-radius:6px;padding:3px 7px;margin:0 -3px 4px;white-space:pre-wrap;word-break:break-word}
+  .bubble .pline.k-author{background:var(--bg-author)}
+  .bubble .pline.k-desc{background:var(--bg-desc)}
+  .bubble .pline.k-time{background:var(--bg-time)}
+  .bubble .pline.k-link{background:var(--bg-link)}
+  .bubble .pline.k-atall{background:var(--bg-atall)}
+  .bubble .pline.k-warn{background:var(--bg-warn)}
+  #pvCard.flash{animation:cardflash 1.4s ease-out 1;border-color:var(--accent)}
+  @keyframes cardflash{0%{box-shadow:0 0 0 0 rgba(47,107,255,.45)}100%{box-shadow:0 0 0 14px rgba(47,107,255,0)}}
+  .subblock{position:relative}
+  .blocktitle{font-size:13px;font-weight:600;color:var(--text);margin:0 0 10px;
+    display:flex;align-items:center;gap:8px}
+  .blocktitle .n{display:inline-flex;align-items:center;justify-content:center;
+    width:19px;height:19px;border-radius:50%;background:var(--accent);color:#fff;
+    font-size:11px;font-weight:600;flex:0 0 19px}
+  .blocktitle .tip{font-weight:400;font-size:12px;color:var(--muted)}
+  .divider{height:1px;background:var(--border);margin:20px 0}
+  .targetbar.flash{animation:tbflash 1.2s ease-out 2;border:1px solid var(--warn)}
+  @keyframes tbflash{0%,100%{background:var(--accent-soft)}50%{background:rgba(201,130,10,.28)}}
+  /* 群列表 */
+  .grouplist{max-height:230px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;
+    margin-top:10px;background:var(--bg)}
+  .grouplist .g{display:flex;gap:10px;align-items:center;padding:7px 12px;cursor:pointer;font-size:13px;
+    border-bottom:1px solid var(--border)}
+  .grouplist .g:last-child{border-bottom:0}
+  .grouplist .g:hover{background:var(--accent-soft)}
+  .grouplist .g.sel{background:var(--accent-soft)}
+  .grouplist .g .gid{color:var(--muted);font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  .grouplist .g .gc{margin-left:auto;color:var(--muted);font-size:11px}
+  .grouplist .g img.gav{width:26px;height:26px;border-radius:6px;flex:0 0 26px;
+    object-fit:cover;background:var(--card)}
+  .grouplist .empty{padding:12px;color:var(--muted);font-size:12px}
+  .avfallback{width:26px;height:26px;border-radius:6px;flex:0 0 26px;display:flex;
+    align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent);
+    font-size:12px;font-weight:600}
+  .avfallback.big{width:44px;height:44px;border-radius:50%;flex:0 0 44px;font-size:16px}
+  .savestate{font-size:12px;color:var(--muted);margin-left:auto;display:flex;align-items:center;gap:6px}
+  .savestate.saving{color:var(--warn)}
+  .savestate.saved{color:var(--ok)}
+  /* 全局 Toast：无论页面滚到哪里，操作结果都看得见 */
+  #toasts{position:fixed;top:16px;right:16px;z-index:9999;display:flex;
+    flex-direction:column;gap:8px;max-width:min(420px,90vw);pointer-events:none}
+  .toast{pointer-events:auto;background:var(--card);border:1px solid var(--border);
+    border-left:4px solid var(--accent);border-radius:9px;padding:10px 14px;font-size:13px;
+    box-shadow:0 6px 22px rgba(0,0,0,.16);animation:tin .22s ease-out;word-break:break-word}
+  .toast.ok{border-left-color:var(--ok)}
+  .toast.err{border-left-color:var(--err)}
+  .toast.warn{border-left-color:var(--warn)}
+  .toast .tt{font-weight:600;margin-bottom:2px}
+  .toast.ok .tt{color:var(--ok)} .toast.err .tt{color:var(--err)} .toast.warn .tt{color:var(--warn)}
+  @keyframes tin{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--border);
+    border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<h1>抖音订阅推送</h1>
+<div class="sub">搜索账号一键订阅 · 选择机器人与群号绑定推送目标 · 新作品自动推送</div>
+
+<!-- ============ 状态 ============ -->
+<div class="card">
+  <h2>运行状态 <span id="statusBadge" class="badge warn">加载中</span>
+    <button class="ghost sm" id="btnCheck" style="margin-left:auto">立即检查一次</button></h2>
+  <div class="grid" id="statGrid"></div>
+  <div class="note" id="statusNote"></div>
+</div>
+
+<!-- ============ 搜索并订阅 ============ -->
+<div class="card">
+  <h2>搜索并订阅</h2>
+
+  <!-- ① 搜索：搜索框与结果紧挨着，中间不插别的东西 -->
+  <div class="subblock">
+    <div class="blocktitle"><span class="n">1</span>搜索账号</div>
+    <div class="row">
+      <input type="text" id="kw" placeholder="输入昵称 / 抖音号 / 主页链接，例如：李子柒、xingyun6535、https://www.douyin.com/user/MS4wLjABAAAA..." />
+      <button id="btnSearch">搜索账号</button>
+    </div>
+    <div class="note">提示：抖音站内搜索对高频请求会返回空结果，此时直接粘贴<b>账号主页链接</b>或输入<b>完整抖音号</b>最稳妥。</div>
+    <div class="msg" id="searchMsg"></div>
+    <div class="results" id="searchResults"></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ② 推送到哪里：多步选择，单独成块 -->
+  <div class="subblock">
+    <div class="blocktitle"><span class="n">2</span>推送到哪里
+      <span class="tip" id="activeTip"></span>
+    </div>
+    <div class="targetbar" id="targetBar">
+      <span>当前目标：</span>
+      <b id="curTarget">（未选择）</b>
+      <span style="color:var(--muted)" id="targetHint">← 选机器人 → 自动加载群列表 → 点群名</span>
+    </div>
+    <div class="row">
+      <select id="selBot" style="min-width:190px"><option value="">选择机器人…</option></select>
+      <input type="text" id="groupFilter" placeholder="筛选群名或群号…" style="max-width:220px" />
+      <select id="knownUmo" style="max-width:240px"><option value="">或选已有会话…</option></select>
+    </div>
+    <div class="grouplist" id="groupList"><div class="empty">先选择一个机器人，选好后会自动拉取群列表；再点群名即可生成推送目标。</div></div>
+  </div>
+</div>
+
+<!-- ============ 已订阅 ============ -->
+<div class="card">
+  <h2>已订阅账号 <button class="ghost sm" id="btnRefreshSubs" style="margin-left:auto">刷新</button></h2>
+  <div id="subsBox"><div class="note">加载中…</div></div>
+</div>
+
+<!-- ============ 推送内容配置 ============ -->
+<div class="card">
+  <h2>推送内容配置</h2>
+  <div class="note" style="margin:0 0 10px">四项附加信息默认全部关闭，即默认只发送作品本体。修改后点击保存立即生效。</div>
+  <div class="grid">
+    <label class="chk f-author"><input type="checkbox" id="cfg_show_author" /> <span class="k-author">1. 作者</span></label>
+    <label class="chk f-desc"><input type="checkbox" id="cfg_show_desc" /> <span class="k-desc">2. 简介</span></label>
+    <label class="chk f-time"><input type="checkbox" id="cfg_show_time" /> <span class="k-time">3. 发布时间</span></label>
+    <label class="chk f-link"><input type="checkbox" id="cfg_show_link" /> <span class="k-link">4. 作品链接</span></label>
+    <label class="chk f-atall"><input type="checkbox" id="cfg_at_all" /> <span class="k-atall">群聊 @全体成员</span></label>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span style="font-size:13px">简介最大字数</span>
+    <input type="number" id="cfg_desc_max_length" style="width:90px" min="20" max="500" step="10" />
+    <span style="font-size:13px">超限时的链接形态</span>
+    <select id="cfg_link_style">
+      <option value="resource">资源直链（可直接下载/播放）</option>
+      <option value="page">作品网页（长期可打开）</option>
+    </select>
+  </div>
+
+  <h2 style="margin-top:18px">视频推送</h2>
+  <div class="row">
+    <span style="font-size:13px">发送方式</span>
+    <select id="cfg_video_mode">
+      <option value="video">视频发送（直接播放）</option>
+      <option value="file">群文件发送（上传群文件）</option>
+    </select>
+    <span style="font-size:13px">大小上限(MB)</span>
+    <input type="number" id="cfg_size_limit_mb" style="width:100px" min="0" max="2000" step="10" />
+    <label class="chk"><input type="checkbox" id="cfg_cover_on_fallback" /> 超限时附带封面</label>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span style="font-size:13px">视频投递</span>
+    <select id="cfg_delivery" style="min-width:260px">
+      <option value="auto">自动（公开走直链，仅自己可见先下载）</option>
+      <option value="direct">始终走直链</option>
+      <option value="download">始终先下载再发送</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="cfg_prefer_no_watermark" /> 改用 snssdk 播放接口</label>
+  </div>
+  <div class="warnbox">
+    ⚠️ <b>资源直链的风险</b>　它是抖音 CDN 的会话级签名地址：<br>
+    ① <b>带有效期</b>，推送发出几小时后基本失效；<br>
+    ② 若作品为 <b>「仅自己可见」</b>，直链一律 403、也无法分享；<br>
+    ③ 公开作品的直链可以直接点开、也能分享。<br>
+    想让链接长期可打开，把「超限时的链接形态」改成 <b>作品网页</b>。<br>
+    另外：<b>视频发送与群文件发送共用同一个体积上限</b>，群文件是与视频并列的投递方式，不是超限后的兜底结果。
+  </div>
+
+  <h2 style="margin-top:18px">轮询与订阅</h2>
+  <div class="row">
+    <span style="font-size:13px">基础间隔(s)</span>
+    <input type="number" id="cfg_base_interval" style="width:100px" min="60" max="3600" step="30" />
+    <span style="font-size:13px">抖动(s)</span>
+    <input type="number" id="cfg_jitter" style="width:90px" min="0" max="300" step="5" />
+    <span style="font-size:13px">并发</span>
+    <input type="number" id="cfg_max_concurrent" style="width:80px" min="1" max="10" />
+    <label class="chk"><input type="checkbox" id="cfg_adapt_interval" /> 账号多时自动拉长间隔</label>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label class="chk"><input type="checkbox" id="cfg_silent_first_sync" /> 静默首次同步（不推历史作品）</label>
+    <label class="chk"><input type="checkbox" id="cfg_admin_only" /> 仅管理员可增删订阅</label>
+    <label class="chk"><input type="checkbox" id="cfg_debug" /> 调试日志</label>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <input type="text" id="cfg_cookie" placeholder="抖音 Cookie（留空则不修改；已配置时显示掩码）" />
+    <span class="savestate" id="saveState"></span>
+  </div>
+  <div class="note">所有改动<b>即时生效</b>，无需点保存。Cookie 在输入框失去焦点后自动保存。</div>
+</div>
+
+<!-- ============ 推送效果实时预览（在配置下方，按配置渲染）============ -->
+<div class="card" id="pvCard">
+  <h2>推送效果实时预览</h2>
+  <div class="note" style="margin:0 0 10px">
+    按上面的<b>推送内容配置</b>渲染出「群里最终会收到什么」。只组装消息、不会发送。
+  </div>
+  <div class="row">
+    <input type="text" id="target" placeholder="账号主页链接 / 抖音号 / 作品链接" />
+    <button id="btnPreview">解析并预览</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <select id="pvLimit">
+      <option value="1">最新 1 条</option>
+      <option value="2">最新 2 条</option>
+      <option value="3">最新 3 条</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="pvUseCfg" checked /> 用当前配置渲染</label>
+    <span id="pvOverride" class="hide">
+      <select id="pvMode">
+        <option value="">按配置</option>
+        <option value="video">视频发送</option>
+        <option value="file">群文件发送</option>
+      </select>
+    </span>
+    <label class="chk"><input type="checkbox" id="pvForceLink" /> 模拟超限降级</label>
+  </div>
+  <div class="msg" id="pvMsg"></div>
+  <div id="pvResult"></div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="/api/plugin/page/bridge-sdk.js"></script>
+<script>
+(function () {
+  const bridge = window.AstrBotPluginPage;
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const nf = n => (n >= 10000 ? (n / 10000).toFixed(1) + "万" : String(n ?? 0));
+
+
+  // 动态地址一律走 data-url，插入 DOM 后再回填成 src。
+  // 原因：AstrBot 会在服务端用正则重写整份插件页 HTML 里所有 src/href 属性
+  // （连 script 内部一起匹配），不以 http/https/data: 开头的值会被改写成
+  // 插件资源路径，模板里的占位符随即失效——头像、预览视频都会加载不出来。
+  function hydrate(root) {
+    (root || document).querySelectorAll("[data-url]").forEach(el => {
+      const u = el.getAttribute("data-url");
+      if (u) el.setAttribute("src", u);
+      el.removeAttribute("data-url");
+    });
+  }
+
+  function toast(title, detail, kind, ms) {
+    const box = $("toasts");
+    if (!box) return;
+    const el = document.createElement("div");
+    el.className = "toast " + (kind || "");
+    const t = document.createElement("div");
+    t.className = "tt";
+    t.textContent = title;
+    el.appendChild(t);
+    if (detail) {
+      const d = document.createElement("div");
+      d.textContent = detail;
+      el.appendChild(d);
+    }
+    box.appendChild(el);
+    setTimeout(() => {
+      el.style.transition = "opacity .25s";
+      el.style.opacity = "0";
+      setTimeout(() => el.remove(), 260);
+    }, ms || 4200);
+  }
+
+  function msg(el, text, kind) {
+    el.textContent = text;
+    el.className = "msg show " + (kind || "err");
+    if (kind === "ok") setTimeout(() => el.classList.remove("show"), 3000);
+  }
+
+  // ================= 推送目标：机器人 → 群列表 → UMO =================
+  let currentTarget = "";
+  let allGroups = [];
+  //: 当前选定的「订阅对象」。点过一次「订阅到此目标」后会一直保留，
+  //: 之后**每选一个群名**都会自动把这个账号订上去——这样一次搜索就能
+  //: 连续订阅多个群，不用每次回来重点按钮。
+  let activeSub = null;
+  //: 已订阅的 "umo|secUid" 组合，避免重复请求。
+  //: 分成「服务端已知」与「本地刚提交」两份取并集——只靠服务端那份的话，
+  //: doSubscribe 之后的 loadSubs() 会用旧快照把刚订上的记录冲掉，导致重复请求。
+  const serverPairs = new Set();
+  const optimisticPairs = new Set();
+  const hasPair = (umo, sec) =>
+    serverPairs.has(umo + "|" + sec) || optimisticPairs.has(umo + "|" + sec);
+
+  function refreshTarget() {
+    currentTarget = $("knownUmo").value || currentTarget;
+    $("curTarget").textContent = currentTarget || "（未选择）";
+    $("targetHint").textContent = currentTarget ? "" : "← 先选机器人和群";
+  }
+
+  function setTarget(umo) {
+    currentTarget = umo;
+    $("knownUmo").value = "";
+    $("curTarget").textContent = umo || "（未选择）";
+    // 选好目标后给明确下一步，避免"选完就不知道要干嘛"
+    $("targetHint").textContent = umo
+      ? "← 已就绪。若上方有搜索结果，点其中的「订阅到此目标」即可"
+      : "← 选机器人 → 自动加载群列表 → 点群名";
+    $("targetBar").classList.remove("flash");
+
+    // 已经点过「订阅到此目标」→ 此后每选一个群都自动把它订上，
+    // 这样一次搜索可以连续订阅多个群，不必重复点按钮。
+    if (umo && activeSub) {
+      const pair = umo + "|" + activeSub.secUid;
+      if (hasPair(umo, activeSub.secUid)) {
+        toast("已订阅过", `「${activeSub.nickname || "该账号"}」已在\n${umo} 的订阅中`, "warn", 3000);
+      } else {
+        doSubscribe(activeSub.secUid, activeSub.nickname, null, umo);
+      }
+    }
+  }
+
+  async function loadSessions() {
+    try {
+      const d = await bridge.apiGet("sessions");
+      const sel = $("knownUmo");
+      sel.innerHTML = `<option value="">或选已有会话…</option>` +
+        (d.known || []).map(k => `<option value="${esc(k.umo)}">${esc(k.umo)}（${k.count} 个订阅）</option>`).join("");
+      const bots = (d.platforms || []).filter(p => p.name === "aiocqhttp");
+      $("selBot").innerHTML = `<option value="">选择机器人…</option>` +
+        bots.map(p => `<option value="${esc(p.id)}">${esc(p.id)}</option>`).join("");
+    } catch (e) { /* 忽略 */ }
+  }
+
+  async function loadGroups() {
+    const bot = $("selBot").value;
+    if (!bot) { msg($("searchMsg"), "请先选择机器人"); return; }
+    $("groupList").innerHTML = `<div class="empty"><span class="spin"></span>正在向协议端拉取群列表…</div>`;
+    hydrate($("groupList"));
+    try {
+      const d = await bridge.apiGet("groups", { platform: bot });
+      allGroups = d.groups || [];
+      renderGroups();
+      if (!allGroups.length) $("groupList").innerHTML = `<div class="empty">该机器人没有拉到任何群</div>`;
+    } catch (e) {
+      $("groupList").innerHTML = `<div class="empty">拉取失败：${esc(e.message || e)}</div>`;
+    }
+  }
+
+  function renderGroups() {
+    const kw = $("groupFilter").value.trim().toLowerCase();
+    const list = kw
+      ? allGroups.filter(g => g.group_name.toLowerCase().includes(kw) || g.group_id.includes(kw))
+      : allGroups;
+    if (!list.length) { $("groupList").innerHTML = `<div class="empty">没有匹配的群</div>`; return; }
+    $("groupList").innerHTML = list.map(g => `
+      <div class="g ${g.umo === currentTarget ? "sel" : ""}" data-umo="${esc(g.umo)}">
+        <img class="gav" data-url="${esc(g.avatar_data || g.avatar)}" loading="lazy" referrerpolicy="no-referrer" alt=""
+             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+        <div class="avfallback" style="display:none">${esc((g.group_name || "?").trim().slice(0, 1) || "?")}</div>
+        <span>${esc(g.group_name)}</span>
+        <span class="gid">${esc(g.group_id)}</span>
+        <span class="gc">${g.member_count} 人</span>
+      </div>`).join("");
+    hydrate($("groupList"));
+  }
+
+  // ================= 搜索账号并订阅 =================
+  async function doSearch() {
+    const kw = $("kw").value.trim();
+    if (!kw) { msg($("searchMsg"), "请输入要搜索的内容"); return; }
+    const btn = $("btnSearch"); btn.disabled = true;
+    $("searchMsg").classList.remove("show");
+    $("searchResults").innerHTML = `<div class="note"><span class="spin"></span>正在搜索…</div>`;
+    hydrate($("searchResults"));
+    try {
+      const d = await bridge.apiGet("search", { keyword: kw, limit: 20 });
+      renderResults(d);
+      if (d.note) msg($("searchMsg"), d.note, "err");
+    } catch (e) {
+      $("searchResults").innerHTML = "";
+      msg($("searchMsg"), "搜索失败：" + (e.message || e));
+    } finally { btn.disabled = false; }
+  }
+
+  function renderResults(d) {
+    const items = d.items || [];
+    if (!items.length) { $("searchResults").innerHTML = ""; return; }
+    $("searchResults").innerHTML = items.map(it => `
+      <div class="rcard">
+        <img class="av" data-url="${esc(it.avatar_data || it.avatar)}" referrerpolicy="no-referrer" alt=""
+             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+        <div class="avfallback big" style="display:none">${esc((it.nickname || "?").trim().slice(0, 1) || "?")}</div>
+        <div class="info">
+          <div class="nm">${esc(it.nickname || "（无昵称）")}</div>
+          <div class="id">抖音号 ${esc(it.unique_id || "—")}${it.follower_count ? " · 粉丝 " + nf(it.follower_count) : ""}${it.aweme_count ? " · 作品 " + nf(it.aweme_count) : ""}</div>
+          <div class="act">
+            <button class="sm" data-sub="${esc(it.sec_uid)}" data-nick="${esc(it.nickname || "")}">订阅到此目标</button>
+            <button class="ghost sm" data-pv="${esc(it.profile_url)}">预览作品</button>
+            ${it.subscribed ? `<span class="badge ok">已订阅</span>` : ""}
+          </div>
+        </div>
+      </div>`).join("");
+    hydrate($("searchResults"));
+  }
+
+  function flashTargetBar() {
+    const bar = $("targetBar");
+    bar.scrollIntoView({ behavior: "smooth", block: "center" });
+    bar.classList.remove("flash");
+    void bar.offsetWidth;          // 强制重排，让动画能重复触发
+    bar.classList.add("flash");
+    setTimeout(() => bar.classList.remove("flash"), 2600);
+    $("selBot").focus();
+  }
+
+  async function doSubscribe(secUid, nickname, btn, umoOverride) {
+    const umo = umoOverride || currentTarget;
+    if (btn) btn.disabled = true;
+    try {
+      const d = await bridge.apiPost("subscribe", { umo, sec_uid: secUid });
+      const name = (d && d.account && d.account.nickname) || nickname || "账号";
+      optimisticPairs.add(umo + "|" + secUid);
+      serverPairs.add(umo + "|" + secUid);
+      msg($("searchMsg"), `已订阅 ${name} → ${umo}`, "ok");
+      toast("✅ 订阅成功", `${name}\n→ ${umo}`, "ok");
+      doSearch(); loadSubs(); loadStatus(); loadSessions();
+    } catch (e) {
+      msg($("searchMsg"), "订阅失败：" + (e.message || e));
+      toast("订阅失败", String(e.message || e), "err", 8000);
+    } finally { if (btn) btn.disabled = false; }
+  }
+
+  function renderActiveTip() {
+    const el = $("activeTip");
+    if (!el) return;
+    el.textContent = "";
+    if (!activeSub) return;
+    const span = document.createElement("span");
+    span.textContent = `订阅对象：「${activeSub.nickname || "该账号"}」　点下面任意群名即可订阅`;
+    const btn = document.createElement("button");
+    btn.className = "ghost sm";
+    btn.style.marginLeft = "8px";
+    btn.textContent = "清除";
+    btn.addEventListener("click", ev => {
+      ev.stopPropagation();
+      activeSub = null;
+      renderActiveTip();
+      toast("已清除订阅对象", "现在点群名只会切换目标，不会自动订阅", "warn", 3600);
+    });
+    el.appendChild(span);
+    el.appendChild(btn);
+  }
+
+  function subscribe(secUid, nickname, btn) {
+    // 记住订阅对象；没选目标时先引导去选，选完会自动订上
+    activeSub = { secUid, nickname };
+    renderActiveTip();
+    if (!currentTarget) {
+      msg($("searchMsg"), `已记住「${nickname || "该账号"}」：请在下方选好推送目标，选完会自动订阅`, "ok");
+      toast("已记住该账号", `「${nickname || "该账号"}」\n请在下方选好推送目标，选完会自动订阅`, "warn", 6000);
+      flashTargetBar();
+      return;
+    }
+    if (hasPair(currentTarget, secUid)) {
+      toast("已订阅过", `「${nickname || "该账号"}」已在\n${currentTarget} 的订阅中`, "warn", 3000);
+      return;
+    }
+    doSubscribe(secUid, nickname, btn, currentTarget);
+  }
+
+  // ================= 已订阅 =================
+  async function loadSubs() {
+    try {
+      const rows = await bridge.apiGet("subs");
+      serverPairs.clear();
+      rows.forEach(r => (r.subs || []).forEach(x => serverPairs.add(r.umo + "|" + x.sec_uid)));
+      // 服务端已经确认的，就从本地乐观集合里删掉
+      optimisticPairs.forEach(p => { if (serverPairs.has(p)) optimisticPairs.delete(p); });
+      if (!rows.length) {
+        $("subsBox").innerHTML = `<div class="note">还没有任何订阅。先选好推送目标，再搜索账号订阅。</div>`;
+        return;
+      }
+      let html = `<table><thead><tr><th>推送目标</th><th>账号</th><th>抖音号</th><th>已记录</th><th>状态</th><th>操作</th></tr></thead><tbody>`;
+      rows.forEach(r => {
+        r.subs.forEach((s, i) => {
+          html += `<tr>`
+            + (i === 0
+                ? `<td rowspan="${r.subs.length}">`
+                  + (r.avatar_data || r.avatar
+                      ? `<img class="avatar" data-url="${esc(r.avatar_data || r.avatar)}" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
+                      : "")
+                  + `${esc(r.umo)}</td>`
+                : "")
+            + `<td>${s.avatar ? `<img class="avatar" data-url="${esc(s.avatar_data || s.avatar)}" referrerpolicy="no-referrer" onerror="this.style.display='none'">` : ""}${esc(s.nickname || s.sec_uid.slice(0, 16) + "…")}</td>`
+            + `<td>${esc(s.unique_id || "—")}</td>`
+            + `<td>${s.seen}</td>`
+            + `<td>${s.fail_count ? `<span class="badge err">失败 ${s.fail_count}</span>` : `<span class="badge ok">正常</span>`}</td>`
+            + `<td>`
+            + `<button class="ghost sm" data-test="${esc(r.umo)}|${esc(s.sec_uid)}">测试推送</button> `
+            + `<button class="ghost sm" data-open="${esc(s.sec_uid)}">预览</button> `
+            + `<button class="danger sm" data-del="${esc(r.umo)}|${esc(s.sec_uid)}">取消</button>`
+            + `</td></tr>`;
+        });
+      });
+      $("subsBox").innerHTML = html + `</tbody></table>`;
+      hydrate($("subsBox"));
+    } catch (e) {
+      $("subsBox").innerHTML = `<div class="note">读取失败：${esc(e.message || e)}</div>`;
+    }
+  }
+
+  async function unsubscribe(umo, sec, btn) {
+    btn.disabled = true;
+    try {
+      const d = await bridge.apiPost("unsubscribe", { umo, sec_uid: sec });
+      serverPairs.delete(umo + "|" + sec);
+      optimisticPairs.delete(umo + "|" + sec);
+      toast("已取消订阅", (d && d.message) || umo, "ok");
+      loadSubs(); loadSessions(); loadStatus();
+    } catch (e) { alert("取消失败：" + (e.message || e)); btn.disabled = false; }
+  }
+
+  async function testPush(umo, sec, btn) {
+    btn.disabled = true;
+    const old = btn.textContent; btn.textContent = "发送中…";
+    try {
+      const d = await bridge.apiPost("test-push", { umo, sec_uid: sec });
+      alert("已发送测试推送到 " + umo + (d && d.plan ? `\n类型：${d.plan.media_kind} × ${d.plan.media_count}` : ""));
+    } catch (e) {
+      alert("发送失败：\n" + (e.message || e));
+    } finally { btn.disabled = false; btn.textContent = old; }
+  }
+
+  // ================= 预览（按配置渲染，只画最终消息）=================
+  function renderPreview(d) {
+    const box = $("pvResult");
+    if (!d.previews || !d.previews.length) { box.innerHTML = ""; return; }
+    const opt = d.options || {};
+    let html = `<div class="note">按当前配置渲染：`
+      + `作者${opt.show_author ? "✓" : "✗"}　简介${opt.show_desc ? "✓" : "✗"}　`
+      + `时间${opt.show_time ? "✓" : "✗"}　链接${opt.show_link ? "✓" : "✗"}　`
+      + `投递 ${opt.video_mode === "file" ? "群文件" : "视频"}　上限 ${esc(opt.size_limit_mb)}MB`
+      + `</div>`;
+
+    d.previews.forEach((pv, idx) => {
+      const p = pv.post, plan = pv.plan;
+      if (d.previews.length > 1) html += `<div class="note" style="margin-top:14px">第 ${idx + 1} 条</div>`;
+      html += `<div class="chat"><div class="bubble">`;
+
+      // 文本：后端按字段结构化返回，这里逐行上对应的底色
+      const lines = (plan.lines && plan.lines.length) ? plan.lines : null;
+      if (lines) {
+        html += lines
+          .filter(l => l && l.text)
+          .map(l => `<div class="pline k-${esc(l.key || "desc")}">${esc(l.text)}</div>`)
+          .join("");
+      } else {
+        const txt = (plan.text || "").trim();
+        if (txt) html += `<div class="txt">${esc(txt)}</div>`;
+      }
+
+      // 媒体
+      const chain = pv.chain || [];
+      const f = chain.find(s => s.type === "File");
+      const hasVideo = chain.some(s => s.type === "Video");
+      const imgCount = p.images ? p.images.length : 0;
+
+      if (f) {
+        html += `<div class="filebox"><span class="ico">📄</span><div>`
+          + `<div>${esc(f.name || "video.mp4")}</div>`
+          + `<div class="meta">作为群文件上传</div></div></div>`;
+      } else if (hasVideo) {
+        html += `<video controls preload="none" data-url="${esc(p.no_watermark_url || p.video_url)}" referrerpolicy="no-referrer"></video>`;
+      } else if (imgCount && !plan.degraded) {
+        html += `<div class="imgs">` + p.images.slice(0, 12).map(u =>
+          `<img data-url="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" alt="" onerror="this.style.opacity=.3">`).join("") + `</div>`;
+        if (imgCount > 12) html += `<div class="meta">…共 ${imgCount} 张</div>`;
+      } else if (plan.degraded && chain.some(s => s.type === "Image")) {
+        html += `<div class="imgs" style="grid-template-columns:120px">` +
+          `<img data-url="${esc(p.cover_url)}" referrerpolicy="no-referrer" alt="" onerror="this.style.opacity=.3"></div>`;
+      }
+
+      if (plan.degraded) {
+        html += `<div class="meta" style="color:var(--warn)">视频 ${plan.video_size_mb}MB 超过上限，已改为发送链接</div>`;
+      }
+      html += `</div></div>`;
+    });
+    box.innerHTML = html;
+    hydrate(box);
+  }
+
+  async function doPreview(targetOverride) {
+    const target = (targetOverride || $("target").value).trim();
+    if (!target) { msg($("pvMsg"), "请先填写账号或作品链接"); return; }
+    if (targetOverride) $("target").value = target;
+    const btn = $("btnPreview"); btn.disabled = true;
+    $("pvMsg").classList.remove("show");
+    $("pvResult").innerHTML = `<div class="note"><span class="spin"></span>正在解析…（真实请求抖音接口，约 1~3 秒）</div>`;
+    focusPreviewCard();          // 立刻滚过去，让用户看到"开始了"
+    try {
+      const params = { target, limit: $("pvLimit").value };
+      if (!$("pvUseCfg").checked) {
+        const mode = $("pvMode").value;
+        if (mode) params.mode = mode;
+      }
+      if ($("pvForceLink").checked) params.force_link = "1";
+      const d = await bridge.apiGet("preview", params);
+      $("pvResult").innerHTML = "";
+      renderPreview(d);
+      focusPreviewCard();        // 渲染完再滚一次，确保结果在视野里
+    } catch (e) {
+      $("pvResult").innerHTML = "";
+      msg($("pvMsg"), "解析失败：" + (e.message || e));
+      focusPreviewCard();
+    } finally { btn.disabled = false; }
+  }
+
+  // 把预览卡片滚进视野并闪一下边框，避免"点了没反应"的困惑
+  function focusPreviewCard() {
+    const card = $("pvCard");
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    card.classList.remove("flash");
+    void card.offsetWidth;       // 强制重排，让动画可重复触发
+    card.classList.add("flash");
+    setTimeout(() => card.classList.remove("flash"), 1600);
+  }
+
+  // ================= 配置 =================
+  const BOOLS = ["show_author", "show_desc", "show_time", "show_link", "at_all"];
+  async function loadConfig() {
+    suppressAutoSave = true;   // 回填表单时不要触发自动保存
+    try {
+      const c = await bridge.apiGet("config");
+      const content = c.content || {}, video = c.video || {},
+            polling = c.polling || {}, sub = c.subscribe || {}, adv = c.advanced || {};
+      BOOLS.forEach(k => { $("cfg_" + k).checked = !!content[k]; });
+      $("cfg_desc_max_length").value = content.desc_max_length ?? 100;
+      $("cfg_link_style").value = content.link_style || "resource";
+      $("cfg_video_mode").value = video.mode || "video";
+      $("cfg_size_limit_mb").value = video.size_limit_mb ?? 100;
+      $("cfg_cover_on_fallback").checked = !!video.cover_on_fallback;
+      $("cfg_prefer_no_watermark").checked = !!video.prefer_no_watermark;
+      $("cfg_delivery").value = video.delivery || "auto";
+      $("cfg_base_interval").value = polling.base_interval ?? 300;
+      $("cfg_jitter").value = polling.jitter ?? 30;
+      $("cfg_max_concurrent").value = polling.max_concurrent ?? 2;
+      $("cfg_adapt_interval").checked = !!polling.adapt_interval;
+      $("cfg_silent_first_sync").checked = !!sub.silent_first_sync;
+      $("cfg_admin_only").checked = !!sub.admin_only;
+      $("cfg_debug").checked = !!adv.debug;
+      $("cfg_cookie").placeholder = c.cookie || "抖音 Cookie";
+    } catch (e) {
+      setSaveState("✗ 读取配置失败：" + (e.message || e), "saving");
+    } finally {
+      setTimeout(() => { suppressAutoSave = false; }, 400);
+    }
+  }
+
+  let saveTimer = null;
+  let suppressAutoSave = false;
+
+  function setSaveState(text, cls) {
+    $("saveState").textContent = text;
+    $("saveState").className = "savestate" + (cls ? " " + cls : "");
+  }
+
+  function scheduleSave(delay) {
+    if (suppressAutoSave) return;
+    clearTimeout(saveTimer);
+    setSaveState("● 待保存…", "saving");
+    saveTimer = setTimeout(saveConfig, delay ?? 400);
+  }
+
+  async function saveConfig() {
+    clearTimeout(saveTimer);
+    setSaveState("● 保存中…", "saving");
+    try {
+      const payload = {
+        content: {
+          desc_max_length: +$("cfg_desc_max_length").value,
+          link_style: $("cfg_link_style").value,
+        },
+        video: {
+          mode: $("cfg_video_mode").value,
+          size_limit_mb: +$("cfg_size_limit_mb").value,
+          cover_on_fallback: $("cfg_cover_on_fallback").checked,
+          prefer_no_watermark: $("cfg_prefer_no_watermark").checked,
+          delivery: $("cfg_delivery").value,
+        },
+        polling: {
+          base_interval: +$("cfg_base_interval").value,
+          jitter: +$("cfg_jitter").value,
+          max_concurrent: +$("cfg_max_concurrent").value,
+          adapt_interval: $("cfg_adapt_interval").checked,
+        },
+        subscribe: { silent_first_sync: $("cfg_silent_first_sync").checked, admin_only: $("cfg_admin_only").checked },
+        advanced: { debug: $("cfg_debug").checked },
+      };
+      BOOLS.forEach(k => { payload.content[k] = $("cfg_" + k).checked; });
+      const cookie = $("cfg_cookie").value.trim();
+      if (cookie) payload.cookie = cookie;
+
+      await bridge.apiPost("config", payload);
+      $("cfg_cookie").value = "";
+      setSaveState("✓ 已保存", "saved");
+      setTimeout(() => { if ($("saveState").classList.contains("saved")) setSaveState(""); }, 2500);
+    } catch (e) {
+      setSaveState("✗ 保存失败：" + (e.message || e), "saving");
+    }
+  }
+
+  const AUTOSAVE_IDS = [
+    "cfg_show_author", "cfg_show_desc", "cfg_show_time", "cfg_show_link", "cfg_at_all",
+    "cfg_desc_max_length", "cfg_link_style",
+    "cfg_video_mode", "cfg_size_limit_mb", "cfg_cover_on_fallback",
+    "cfg_prefer_no_watermark", "cfg_delivery",
+    "cfg_base_interval", "cfg_jitter", "cfg_max_concurrent", "cfg_adapt_interval",
+    "cfg_silent_first_sync", "cfg_admin_only", "cfg_debug",
+    "cfg_cookie",
+  ];
+
+  function bindAutoSave() {
+    AUTOSAVE_IDS.forEach(id => {
+      const el = $(id);
+      if (!el) return;
+      const immediate = el.type === "checkbox" || el.tagName === "SELECT";
+      el.addEventListener(immediate ? "change" : "change", () => scheduleSave(immediate ? 120 : 500));
+      // 勾选框/下拉框点一下就想马上存；数字框在输入时也防抖保存
+      if (el.type === "number") el.addEventListener("input", () => scheduleSave(700));
+    });
+  }
+
+  // ================= 状态 =================
+  async function loadStatus() {
+    try {
+      const d = await bridge.apiGet("status");
+      const badge = $("statusBadge");
+      if (d.cookie_ok) { badge.className = "badge ok"; badge.textContent = "运行中"; }
+      else { badge.className = "badge err"; badge.textContent = d.cookie_configured ? "Cookie 异常" : "未配置 Cookie"; }
+      const loginPic = d.login_avatar_data || d.login_avatar || "";
+      const loginCell = `<div class="stat"><div class="k">登录账号</div>`
+        + `<div class="v" style="display:flex;align-items:center;gap:7px">`
+        + (loginPic
+            ? `<img class="avatar" style="margin:0" data-url="${esc(loginPic)}" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
+            : "")
+        + `<span>${esc(d.login_account || "—")}</span></div></div>`;
+      $("statGrid").innerHTML = loginCell + [
+        ["订阅总数", d.subscription_count],
+        ["会话数", d.session_count],
+        ["账号数", d.account_count],
+        ["当前间隔", d.interval + "s (+" + d.jitter + "s)"],
+        ["累计推送", (d.stats && d.stats.pushes) || 0],
+        ["累计检查", (d.stats && d.stats.checks) || 0],
+        ["错误次数", (d.stats && d.stats.errors) || 0],
+      ].map(([k, v]) => `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+      hydrate($("statGrid"));
+      $("statusNote").textContent = d.cookie_ok
+        ? "Cookie 有效，轮询正常。"
+        : (d.cookie_message || "请在下方填写 Cookie 后保存。") + ((d.stats && d.stats.last_error) ? "　最近错误：" + d.stats.last_error : "");
+    } catch (e) {
+      $("statusBadge").className = "badge err";
+      $("statusBadge").textContent = "读取失败";
+      $("statusNote").textContent = String(e && e.message || e);
+    }
+  }
+
+  // ================= 事件绑定 =================
+  document.addEventListener("click", ev => {
+    const g = ev.target.closest(".grouplist .g");
+    if (g) { setTarget(g.getAttribute("data-umo")); renderGroups(); return; }
+    const t = ev.target.closest("button");
+    if (!t) return;
+    const sub = t.getAttribute("data-sub");
+    if (sub) return subscribe(sub, t.getAttribute("data-nick") || "", t);
+    const pv = t.getAttribute("data-pv"); if (pv) return doPreview(pv);
+    const del = t.getAttribute("data-del");
+    if (del) { const [u, s] = del.split("|"); return unsubscribe(u, s, t); }
+    const tp = t.getAttribute("data-test");
+    if (tp) { const [u, s] = tp.split("|"); return testPush(u, s, t); }
+    const op = t.getAttribute("data-open"); if (op) return doPreview(op);
+  });
+
+  (async function init() {
+    try { await bridge.ready(); } catch (e) { /* 非 iframe 环境 */ }
+    bridge.onContext(ctx => document.body.classList.toggle("dark", !!ctx.isDark));
+
+    $("groupFilter").addEventListener("input", renderGroups);
+    // 选好机器人立即拉取群列表，不需要再点按钮
+    $("selBot").addEventListener("change", () => {
+      allGroups = [];
+      $("groupFilter").value = "";
+      if ($("selBot").value) loadGroups();
+      else $("groupList").innerHTML =
+        `<div class="empty">先选择一个机器人，选好后会自动拉取群列表；再点群名即可生成推送目标。</div>`;
+    });
+    $("knownUmo").addEventListener("change", e => setTarget(e.target.value));
+
+    $("btnSearch").onclick = doSearch;
+    $("kw").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+    $("btnPreview").onclick = () => doPreview();
+    $("target").addEventListener("keydown", e => { if (e.key === "Enter") doPreview(); });
+    $("pvUseCfg").addEventListener("change", e =>
+      $("pvOverride").classList.toggle("hide", e.target.checked));
+    bindAutoSave();
+    $("btnRefreshSubs").onclick = () => { loadSubs(); loadSessions(); };
+    $("btnCheck").onclick = async () => {
+      const b = $("btnCheck"); b.disabled = true; b.textContent = "检查中…";
+      try { await bridge.apiPost("check", {}); loadStatus(); }
+      catch (e) { alert("检查失败：" + (e.message || e)); }
+      finally { b.disabled = false; b.textContent = "立即检查一次"; }
+    };
+
+    await Promise.all([loadStatus(), loadConfig(), loadSubs(), loadSessions()]);
+  })();
+})();
+</script>
+</body>
+</html>

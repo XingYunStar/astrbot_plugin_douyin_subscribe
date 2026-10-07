@@ -1,0 +1,8 @@
+name: astrbot_plugin_douyin_subscribe
+display_name: 抖音订阅推送
+desc: 订阅抖音账号，TA 发布新作品时自动推送。图文发图片、视频发视频；支持视频大小限制降级、视频/群文件两种发送方式，并自带 WebUI 管理页（搜索订阅 / 群列表选择 / 实时预览推送效果）。签名纯 Python 实现，无需 Node.js。
+short_desc: 抖音账号新作品订阅推送
+author: 星陨
+version: 1.0.0
+repo: https://github.com/XingYunStar/astrbot_plugin_douyin_subscribe
+astrbot_version: ">=4.25,<5"
