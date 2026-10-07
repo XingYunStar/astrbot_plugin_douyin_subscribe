@@ -284,33 +284,6 @@ sig   = hashlib.md5(f"{uifid}_{timestamp}_{SALT}_{query}".encode()).hexdigest()
 
 ## ⚠️ 已知限制与排查
 
-### 更新插件请用「重载」，不要用「卸载」
-
-AstrBot 的卸载确认框带两个勾选项，**默认会连数据一起删**：
-
-- ☑ 同时删除配置文件 → 删掉 `data/config/astrbot_plugin_douyin_subscribe_config.json`，**Cookie 没了**
-- ☑ 同时删除数据 → 删掉 `data/plugin_data/astrbot_plugin_douyin_subscribe/`，**全部订阅关系和轮询基线没了**
-
-卸载后插件重启会打印「已启动：0 条订阅 / 0 个会话」和「尚未配置 Cookie」，
-这正是上述两项被清掉的表现，且**无法找回**（需要重新填 Cookie、重新订阅）。
-
-日常升级请直接点插件卡片上的 **重载**——它只重新加载代码，不碰配置和数据。
-确实要卸载时，先把这两个勾**取消**。
-
-> 想手动备份：订阅数据在 `data/plugin_data/astrbot_plugin_douyin_subscribe/subscriptions.json`，
-> 配置在 `data/config/astrbot_plugin_douyin_subscribe_config.json`，把这两个文件复制走就行。
-
-### 「首次订阅时推送最近作品」只对新订阅生效
-
-这个开关**不是**「补推开关」：它只在**首次订阅某个账号**时判断一次。
-
-账号一旦订阅过，`initialized` 基线就被永久置为 `true`，之后再把这个开关从关改成开，
-**已订阅的账号不会再补推历史作品**（否则每次改配置都会被历史作品刷屏）。
-
-想对已订阅账号补推最近作品，**取消订阅再重新订阅**即可——取消后该账号的
-`initialized` 基线会被一并清除，重新订阅就等价于一次全新的首次订阅。
-注意仍受 `首次同步的时间范围（小时）` 限制：最近一条作品超过该时长就不会推。
-
 ### 踩过的坑（都已在代码里规避）
 
 | # | 现象 | 原因 |
