@@ -101,7 +101,8 @@
 
 <a id="callback-base"></a>
 
-### 2. `callback_api_base`（大多数情况下**不用填**）
+<details>
+<summary><b>2. <code>callback_api_base</code>（大多数情况下<b>不用填</b>）　—— 点击展开详情</b></summary>
 
 这是 AstrBot 的**全局**配置项，不是本插件的配置。**默认留空即可**，只有下面这几种情况才需要填：
 
@@ -174,10 +175,55 @@ astrbot    网络: TRSS_2 bot bridge
 snowluma   网络: bot bridge
 ```
 
-**如果没有共有网络**，把机器人接到 AstrBot 所在的网络上（立即生效、无需重启，重启后仍保留）：
+**如果没有共有网络**，有两种做法，任选其一。
+
+**做法 A：把机器人接进 AstrBot 已有的网络**（最省事）
 
 ```bash
+# 1. 先看 AstrBot 在哪些网络
+docker inspect astrbot --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+# 2. 把机器人容器接进去
 docker network connect <AstrBot所在的网络名> <机器人容器名>
+```
+
+**做法 B：自己建一个专用网络，把两个容器都接进去**（推荐，网络更干净、不受其他容器干扰）
+
+```bash
+# 1. 建一个用户自定义 bridge 网络
+docker network create botnet
+
+# 2. 把 AstrBot 接进去
+docker network connect botnet astrbot
+
+# 3. 把机器人容器也接进去
+docker network connect botnet <机器人容器名>
+
+# 4. 从机器人容器验证，返回 200 即通
+docker exec <机器人容器名> curl -s -o /dev/null -w "%{http_code}\n" http://astrbot:6185/
+```
+
+> [!IMPORTANT]
+> 一定要用 **`docker network create` 建的用户自定义网络**，不要依赖默认的 `bridge`。
+> 默认 `bridge` 网络**没有内嵌 DNS**：容器之间只能用 IP 互访、**容器名解析不了**，
+> `http://astrbot:6185` 会直接报 `Name or service not known`。
+> 用户自定义网络自带 DNS，容器名即主机名。
+
+> [!NOTE]
+> `docker network connect` / `disconnect` 对**运行中的容器立即生效，不需要重启**，
+> 重启后也会保留（除非容器被删除重建）。想撤掉就 `docker network disconnect botnet <容器名>`。
+
+如果用的是 **docker compose**，改 compose 文件比手工 connect 更稳妥（重建容器后不会丢）：
+
+```yaml
+services:
+  astrbot:
+    networks: [botnet]
+  napcat:
+    networks: [botnet]
+
+networks:
+  botnet:
+    driver: bridge
 ```
 
 连上后再 curl 一次确认，通过就用容器名填 `callback_api_base`：`http://astrbot:6185`
@@ -194,6 +240,8 @@ docker exec <机器人容器名> curl -s -o /dev/null -w "%{http_code}\n" http:/
 显示 `该作品为「仅自己可见」…已改为本地化投递` = 可用；显示 `未配置 callback_api_base` = 还没配好。
 
 **方法三**：在「已订阅账号」里点「测试推送」，去群里看视频能否正常播放。
+
+</details>
 
 ### 3. 插件配置项
 
@@ -235,6 +283,19 @@ docker exec <机器人容器名> curl -s -o /dev/null -w "%{http_code}\n" http:/
 >   否则刚改完配置就把它们拉起来重试，只会加重风控。
 >
 > 改「推送内容」「视频推送」不影响排期，不会触发重新计时。
+
+> **反复勾选「推送最近作品」不会重复补推。** 每个「会话 × 账号」的回执**只发一次**，
+> 标记存在 `subscriptions.json` 的 `sessions[umo].latest_synced` 里。所以把这个开关
+> 关掉再打开，**只有还没收到过回执的会话会补推**，已经收到过的不会再来一条。
+>
+> 这是刻意的语义：该开关是「让每个群**至少**收一条回执来确认订阅生效」，而不是
+> 「每次打开都把历史作品刷一遍」——否则每调一次配置就会把老作品重推给所有群。
+>
+> 注意一个容易困惑的现象：勾选它会**触发重新计时**（因为它在「订阅行为」组里），
+> 于是轮询会提前跑一轮，但**不会有任何推送**——因为待补推列表本来就是空的。
+>
+> 想让某个群重新收到一条：**把那个群对该账号的订阅取消、再重新订阅**即可
+> （退订会一并清掉该会话的标记）。
 
 ### 4. ⚠️ 关于资源直链的风险
 
