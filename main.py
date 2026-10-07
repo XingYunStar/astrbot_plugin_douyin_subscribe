@@ -363,23 +363,24 @@ class DouyinSubscribePlugin(Star):
             )
             return
 
-        # 开关是订阅之后才打开的：对已有订阅补推一次最近作品。
-        # 订阅时开关关着的账号，latest_synced 一直是 False，这里正好补上。
-        if (
-            bool(self._cfg("subscribe", "first_sync_push_latest", default=False))
-            and not self.store.is_latest_synced(sec_uid)
-        ):
-            # 先标记再推：这是一次性补推，失败也不自动重试——
-            # 否则每一轮轮询都会重推一次，消息和日志都会被刷屏。
-            self.store.set_latest_synced(sec_uid, True)
-            try:
-                note = await self._push_latest_once(sec_uid, posts)
-                logger.info(f"[抖音订阅] 账号 {sec_uid[:16]}… 补推最近作品：{note}")
-            except Exception as exc:
-                logger.warning(
-                    f"[抖音订阅] 账号 {sec_uid[:16]}… 补推最近作品失败：{exc}"
-                    "（不会自动重试，如需重推可先取消订阅再重新订阅）"
-                )
+        # 开关是订阅之后才打开的，或者某个群是后来才订上的：给「还没收到过最近
+        # 作品」的会话逐个补推一条。逐个处理（而不是一次性广播）才能覆盖
+        # 「同一个账号订到多个群、其中某个群还没收过」的情况。
+        if bool(self._cfg("subscribe", "first_sync_push_latest", default=False)):
+            for umo in self.store.pending_latest_for(sec_uid):
+                # 先标记再推：这是一次性补推，失败也不自动重试——
+                # 否则每一轮轮询都会重推，消息和日志都会被刷屏。
+                self.store.set_latest_synced(umo, sec_uid, True)
+                try:
+                    note = await self._push_latest_once(sec_uid, posts, only_umo=umo)
+                    logger.info(
+                        f"[抖音订阅] 账号 {sec_uid[:16]}… 补推最近作品给 {umo}：{note}"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[抖音订阅] 账号 {sec_uid[:16]}… 补推最近作品给 {umo} 失败：{exc}"
+                        "（不会自动重试，如需重推可先取消订阅再重新订阅）"
+                    )
 
         new_posts = [p for p in posts if not self.store.is_seen(sec_uid, p.aweme_id)]
         if new_posts:
@@ -582,9 +583,15 @@ class DouyinSubscribePlugin(Star):
         push_latest = bool(
             self._cfg("subscribe", "first_sync_push_latest", default=False)
         )
+        # 这里刻意分成两件事，别混在一起：
+        #   * 去重基线是**账号级**的（这个账号拉过历史作品没有）
+        #   * 订阅回执是**会话级**的（这个群要不要收一条最近作品）
+        # 以前两者共用一个 `if not is_initialized(账号)`，结果是同一个账号订阅到
+        # 第二个群时整块被跳过——第二个群什么也收不到。
         baseline_note = ""
-        if not self.store.is_initialized(account.sec_uid):
-            try:
+        posts: list[DouyinPost] = []
+        try:
+            if not self.store.is_initialized(account.sec_uid):
                 count = int(
                     self._cfg("subscribe", "first_sync_max_posts", default=20) or 0
                 )
@@ -595,24 +602,34 @@ class DouyinSubscribePlugin(Star):
                 self.store.mark_seen(account.sec_uid, [p.aweme_id for p in posts])
                 self.store.set_initialized(account.sec_uid, True)
                 baseline_note = f"\n已记录 {len(posts)} 条历史作品作为基线"
+        except DouyinError as exc:
+            posts = []
+            baseline_note = f"\n（建立基线失败：{exc}，将在下次轮询时重试）"
 
-                if push_latest:
-                    # 开关是开的：现在就处理掉最近作品，并标记为已处理
-                    self.store.set_latest_synced(account.sec_uid, True)
-                    try:
-                        note = await self._push_latest_once(
-                            account.sec_uid, posts, only_umo=umo
-                        )
-                        baseline_note += f"；{note}"
-                    except Exception as exc:
-                        logger.error(f"[抖音订阅] 订阅时推送失败：{exc}")
-                        baseline_note += f"；推送最近一条失败（{exc}）"
-                else:
-                    # 开关是关的：不补推，但**故意不置 latest_synced**——
-                    # 这样用户之后把开关从关改成开，还能在轮询里补推一次
-                    baseline_note += "（静默同步，不推送历史作品）"
-            except DouyinError as exc:
-                baseline_note = f"\n（建立基线失败：{exc}，将在下次轮询时重试）"
+        # 订阅回执：只推给**这次订阅的会话**，不广播给老订阅者
+        if push_latest and not self.store.is_latest_synced(umo, account.sec_uid):
+            self.store.set_latest_synced(umo, account.sec_uid, True)
+            try:
+                if not posts:
+                    # 账号早已建立过基线（例如之前订到别的群），
+                    # 这里单独拉一次只为取到最近作品
+                    count = int(
+                        self._cfg("subscribe", "first_sync_max_posts", default=20) or 0
+                    )
+                    posts = await client.fetch_posts(
+                        account.sec_uid, limit=max(count, MIN_BASELINE)
+                    )
+                note = await self._push_latest_once(
+                    account.sec_uid, posts, only_umo=umo
+                )
+                baseline_note += f"；{note}"
+            except Exception as exc:
+                logger.error(f"[抖音订阅] 订阅时推送失败：{exc}")
+                baseline_note += f"；推送最近一条失败（{exc}）"
+        elif not push_latest:
+            # 开关是关的：不补推，也**故意不标记**——
+            # 这样用户之后把开关打开，轮询会补推一次
+            baseline_note += "（静默同步，不推送历史作品）"
 
         # 立刻安排一次检查
         self.store.record_success(

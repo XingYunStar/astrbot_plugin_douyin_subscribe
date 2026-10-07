@@ -95,6 +95,18 @@ class SubscriptionStore:
             state.setdefault("fail_count", 0)
             state.setdefault("next_check", 0)
             state.setdefault("last_check", 0)
+
+        # 会话记录补字段；并把 1.0.6 及以前记在**账号**上的 latest_synced 继承到
+        # 各会话——否则升级后每个群都会被当成「还没收到过最近作品」，一次性收到
+        # 一堆补推。顺手清掉已退订账号残留的标记。
+        for entry in self._data["sessions"].values():
+            subs = entry.setdefault("subs", [])
+            done: list[str] = entry.setdefault("latest_synced", [])
+            for sec in subs:
+                acct = self._data["accounts"].get(sec) or {}
+                if acct.get("latest_synced") and sec not in done:
+                    done.append(sec)
+            entry["latest_synced"] = [s for s in done if s in subs]
         self._loaded = True
 
     def save(self) -> None:
@@ -123,7 +135,6 @@ class SubscriptionStore:
                 "avatar": "",
                 "seen": [],
                 "initialized": False,
-                "latest_synced": False,
                 "last_check": 0,
                 "fail_count": 0,
                 "next_check": 0,
@@ -170,18 +181,40 @@ class SubscriptionStore:
     def is_initialized(self, sec_uid: str) -> bool:
         return bool(self._account(sec_uid).get("initialized"))
 
-    def set_latest_synced(self, sec_uid: str, value: bool = True) -> None:
-        """标记「最近作品」是否已处理过。
+    # -- 订阅回执：按「会话 × 账号」记 ---------------------------------------
 
-        与 ``initialized`` 的区别：``initialized`` 只关心去重基线有没有建立，
-        而本标记关心「开关打开时该不该补推一条最近作品」。订阅时开关若是关的，
-        这里保持 ``False``，之后用户把开关打开就能补推一次；推过（或判定为
-        超出时间范围）之后置 ``True``，保证同一个账号不重复补推。
+    def set_latest_synced(self, umo: str, sec_uid: str, value: bool = True) -> None:
+        """标记某个**会话**是否已经收到过该账号的「最近作品」。
+
+        这里刻意按「会话 × 账号」而不是按账号来记。按账号记会漏掉这种情况：
+        同一个账号先后订阅到两个群，账号在第一次订阅时就已 initialized，
+        于是第二次订阅被整块跳过，**第二个群什么也收不到**。
+
+        与 ``initialized`` 的分工：``initialized`` 管的是账号级的去重基线
+        （拉过历史作品没有），本标记管的是「这个群要不要收一条订阅回执」。
         """
-        self._account(sec_uid)["latest_synced"] = value
+        entry = self._data["sessions"].get(umo)
+        if not entry or sec_uid not in (entry.get("subs") or []):
+            return  # 不是有效订阅关系，不凭空造会话记录
+        lst: list[str] = entry.setdefault("latest_synced", [])
+        if value:
+            if sec_uid not in lst:
+                lst.append(sec_uid)
+        elif sec_uid in lst:
+            lst.remove(sec_uid)
 
-    def is_latest_synced(self, sec_uid: str) -> bool:
-        return bool(self._account(sec_uid).get("latest_synced"))
+    def is_latest_synced(self, umo: str, sec_uid: str) -> bool:
+        entry = self._data["sessions"].get(umo) or {}
+        return sec_uid in (entry.get("latest_synced") or [])
+
+    def pending_latest_for(self, sec_uid: str) -> list[str]:
+        """订阅了该账号、但还没收到过「最近作品」的会话列表。"""
+        return [
+            umo
+            for umo, entry in self._data["sessions"].items()
+            if sec_uid in (entry.get("subs") or [])
+            and sec_uid not in (entry.get("latest_synced") or [])
+        ]
 
     # -- 轮询调度辅助 -------------------------------------------------------
 
@@ -275,6 +308,9 @@ class SubscriptionStore:
         if sec_uid not in subs:
             return False
         subs.remove(sec_uid)
+        done = entry.get("latest_synced")
+        if isinstance(done, list) and sec_uid in done:
+            done.remove(sec_uid)
         if not subs:
             self._data["sessions"].pop(umo, None)
         self._gc_account(sec_uid)
