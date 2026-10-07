@@ -448,12 +448,22 @@
   async function loadSessions() {
     try {
       const d = await bridge.apiGet("sessions");
+      // 重建 <select> 的 innerHTML 会把当前选中值重置成占位项，所以先记住再还原。
+      // 否则订阅成功后会（本函数在 doSubscribe / 刷新按钮里都会被调用）用户刚选好的
+      // 机器人变回「选择机器人…」，看起来就像选择状态凭空丢了。
+      const keepBot = $("selBot").value;
+      const keepUmo = $("knownUmo").value;
+
       const sel = $("knownUmo");
       sel.innerHTML = `<option value="">或选已有会话…</option>` +
         (d.known || []).map(k => `<option value="${esc(k.umo)}">${esc(k.umo)}（${k.count} 个订阅）</option>`).join("");
       const bots = (d.platforms || []).filter(p => p.name === "aiocqhttp");
       $("selBot").innerHTML = `<option value="">选择机器人…</option>` +
         bots.map(p => `<option value="${esc(p.id)}">${esc(p.id)}</option>`).join("");
+
+      // 原选项若已不存在（例如机器人被停用），赋一个不存在的值会自然回落到占位项
+      $("selBot").value = keepBot;
+      $("knownUmo").value = keepUmo;
     } catch (e) { /* 忽略 */ }
   }
 
@@ -885,6 +895,9 @@
       await bridge.apiPost("config", payload);
       setSaveState("✓ 已保存", "saved");
       setTimeout(() => { if ($("saveState").classList.contains("saved")) setSaveState(""); }, 2500);
+      // 「运行状态」里的「当前间隔」是从 status 接口实时算出来的，改完「轮询与订阅」
+      // 必须重新拉一次，否则那张卡片会一直停在旧值上。
+      loadStatus();
     } catch (e) {
       setSaveState("✗ 保存失败：" + (e.message || e), "saving");
     }
