@@ -293,6 +293,24 @@ class DouyinSubscribePlugin(Star):
             )
             return
 
+        # 开关是订阅之后才打开的：对已有订阅补推一次最近作品。
+        # 订阅时开关关着的账号，latest_synced 一直是 False，这里正好补上。
+        if (
+            bool(self._cfg("subscribe", "first_sync_push_latest", default=False))
+            and not self.store.is_latest_synced(sec_uid)
+        ):
+            # 先标记再推：这是一次性补推，失败也不自动重试——
+            # 否则每一轮轮询都会重推一次，消息和日志都会被刷屏。
+            self.store.set_latest_synced(sec_uid, True)
+            try:
+                note = await self._push_latest_once(sec_uid, posts)
+                logger.info(f"[抖音订阅] 账号 {sec_uid[:16]}… 补推最近作品：{note}")
+            except Exception as exc:
+                logger.warning(
+                    f"[抖音订阅] 账号 {sec_uid[:16]}… 补推最近作品失败：{exc}"
+                    "（不会自动重试，如需重推可先取消订阅再重新订阅）"
+                )
+
         new_posts = [p for p in posts if not self.store.is_seen(sec_uid, p.aweme_id)]
         if new_posts:
             # 接口按时间倒序返回，推送时改为从旧到新更符合阅读直觉
@@ -332,6 +350,35 @@ class DouyinSubscribePlugin(Star):
     # ------------------------------------------------------------------
     # 推送
     # ------------------------------------------------------------------
+
+    async def _push_latest_once(
+        self, sec_uid: str, posts: list[DouyinPost], only_umo: str | None = None
+    ) -> str:
+        """推送账号的**最近一条**作品，受「首次推送的时间范围」约束。
+
+        只推最近一条、且要落在设定时间范围内，是为了避免订阅一个久未更新的
+        账号时，把很久以前的老作品当成新作品推出来，看着像诈尸。
+
+        返回一句人类可读的结果说明（供订阅回执/日志使用）；推送失败会抛异常，
+        由调用方决定怎么记录。
+        """
+        if not posts:
+            return "该账号暂时没有可推送的作品"
+
+        max_age_hours = float(
+            self._cfg("subscribe", "first_sync_max_age_hours", default=12) or 0
+        )
+        latest = max(posts, key=lambda p: p.create_time)
+        age_hours = max((time.time() - float(latest.create_time or 0)) / 3600.0, 0.0)
+
+        if max_age_hours > 0 and age_hours > max_age_hours:
+            return (
+                f"最近一条作品发布于 {age_hours:.1f} 小时前，"
+                f"超出 {max_age_hours:g} 小时范围，未推送"
+            )
+
+        await self._push_post(sec_uid, latest, only_umo=only_umo)
+        return f"已推送最近一条作品（发布于 {age_hours:.1f} 小时前）"
 
     async def _push_post(
         self, sec_uid: str, post: DouyinPost, only_umo: str | None = None
@@ -465,9 +512,6 @@ class DouyinSubscribePlugin(Star):
         push_latest = bool(
             self._cfg("subscribe", "first_sync_push_latest", default=False)
         )
-        max_age_hours = float(
-            self._cfg("subscribe", "first_sync_max_age_hours", default=12) or 0
-        )
         baseline_note = ""
         if not self.store.is_initialized(account.sec_uid):
             try:
@@ -482,29 +526,20 @@ class DouyinSubscribePlugin(Star):
                 self.store.set_initialized(account.sec_uid, True)
                 baseline_note = f"\n已记录 {len(posts)} 条历史作品作为基线"
 
-                if push_latest and posts:
-                    # 只推**最近的一条**，并且要落在设定的时间范围内——
-                    # 否则订阅一个好久没更新的账号，会把很久以前的老作品当成
-                    # 新作品推出来，看着像诈尸。
-                    latest = max(posts, key=lambda p: p.create_time)
-                    age_hours = max(
-                        (time.time() - float(latest.create_time or 0)) / 3600.0, 0.0
-                    )
-                    if max_age_hours > 0 and age_hours > max_age_hours:
-                        baseline_note += (
-                            f"；最近一条作品发布于 {age_hours:.1f} 小时前，"
-                            f"超出 {max_age_hours:g} 小时范围，未推送"
+                if push_latest:
+                    # 开关是开的：现在就处理掉最近作品，并标记为已处理
+                    self.store.set_latest_synced(account.sec_uid, True)
+                    try:
+                        note = await self._push_latest_once(
+                            account.sec_uid, posts, only_umo=umo
                         )
-                    else:
-                        try:
-                            await self._push_post(account.sec_uid, latest, only_umo=umo)
-                            baseline_note += (
-                                f"；已推送最近一条作品（发布于 {age_hours:.1f} 小时前）"
-                            )
-                        except Exception as exc:
-                            logger.error(f"[抖音订阅] 订阅时推送失败：{exc}")
-                            baseline_note += f"；推送最近一条失败（{exc}）"
-                elif not push_latest:
+                        baseline_note += f"；{note}"
+                    except Exception as exc:
+                        logger.error(f"[抖音订阅] 订阅时推送失败：{exc}")
+                        baseline_note += f"；推送最近一条失败（{exc}）"
+                else:
+                    # 开关是关的：不补推，但**故意不置 latest_synced**——
+                    # 这样用户之后把开关从关改成开，还能在轮询里补推一次
                     baseline_note += "（静默同步，不推送历史作品）"
             except DouyinError as exc:
                 baseline_note = f"\n（建立基线失败：{exc}，将在下次轮询时重试）"

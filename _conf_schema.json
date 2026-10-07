@@ -1,296 +1,296 @@
 {
-  "usage_note": {
-    "type": "string",
-    "description": "📌 订阅在哪里配置？",
-    "hint": "本页只放全局参数。**订阅账号**和**订阅群号**都在插件的 WebUI 页面里配置：进入 WebUI → 插件管理 → 抖音订阅推送 → 打开右上角的 douyin_subscribe 页面。在那里可以：① 选择机器人 → 拉取群列表 → 点选群号（自动生成推送目标）；② 搜索抖音账号一键订阅；③ 实时预览推送效果；④ 发送测试推送。本页的「推送内容配置」会直接影响那边的预览渲染结果。",
-    "obvious_hint": true,
-    "readonly": true,
-    "default": "在 WebUI 页面中配置（插件管理 → 抖音订阅推送 → douyin_subscribe）"
-  },
-  "cookie": {
-    "type": "string",
-    "description": "抖音 Cookie",
-    "hint": "在浏览器登录 douyin.com 后，按 F12 → Network → 任意请求 → 复制完整 Cookie 粘贴到这里。这是插件唯一的凭证，等同于你的登录态，请勿分享。签名所需的 uifid 会自动从其中的 UIFID 字段提取，无需手动配置，也无需导出任何浏览器密钥。",
-    "obvious_hint": true,
-    "secret": true,
-    "default": ""
-  },
-  "enabled": {
-    "type": "bool",
-    "description": "启用轮询",
-    "hint": "关闭后停止所有后台轮询，已有订阅关系会保留，不会丢失。",
-    "default": true
-  },
-  "content": {
-    "type": "object",
-    "description": "推送内容",
-    "hint": "默认只发送作品本体（图文发图片、视频发视频）。下面四项均为附加信息，全部默认关闭，按需开启。",
-    "items": {
-      "show_author": {
-        "type": "bool",
-        "description": "附加 1：作者",
-        "hint": "在推送中带上「【作者名】发布了新作品」这一行。",
-        "default": false
-      },
-      "show_desc": {
-        "type": "bool",
-        "description": "附加 2：简介",
-        "hint": "在推送中带上作品的文案/标题。文案过长时会自动截断。",
-        "default": false
-      },
-      "show_time": {
-        "type": "bool",
-        "description": "附加 3：发布时间",
-        "hint": "在推送中带上作品的发布时间。",
-        "default": false
-      },
-      "show_link": {
-        "type": "bool",
-        "description": "附加 4：作品链接",
-        "hint": "在推送中带上可直接点开的抖音作品链接。",
-        "default": false
-      },
-      "desc_max_length": {
-        "type": "int",
-        "description": "简介最大字数",
-        "hint": "超出部分会被截断并加省略号，避免刷屏。",
-        "slider": {
-          "min": 20,
-          "max": 500,
-          "step": 10
-        },
-        "default": 100
-      },
-      "link_style": {
+    "usage_note": {
         "type": "string",
-        "description": "链接形态",
-        "options": [
-          "resource",
-          "page"
-        ],
-        "labels": [
-          "资源直链：CDN 上可直接下载/播放的视频文件地址",
-          "作品网页：抖音的作品详情页"
-        ],
-        "hint": "⚠️ 风险提示：资源直链是抖音 CDN 的会话级签名地址，① 带有效期，推送发出几小时后基本失效；② 若作品被设为「仅自己可见」，直链一律 403、也无法分享；③ 公开作品的直链可以直接点开。如果你希望链接长期可打开，请选「作品网页」。",
-        "default": "resource"
-      },
-      "at_all": {
-        "type": "bool",
-        "description": "群聊中 @全体成员",
-        "hint": "仅在群聊生效，私聊忽略。请谨慎开启，容易被群友讨厌。",
-        "default": false
-      }
-    }
-  },
-  "video": {
-    "type": "object",
-    "description": "视频推送",
-    "items": {
-      "mode": {
+        "description": "📌 订阅在哪里配置？",
+        "hint": "本页只放全局参数。**订阅账号**和**订阅群号**都在插件的 WebUI 页面里配置：进入 WebUI → 插件管理 → 抖音订阅推送 → 打开右上角的 douyin_subscribe 页面。在那里可以：① 选择机器人 → 拉取群列表 → 点选群号（自动生成推送目标）；② 搜索抖音账号一键订阅；③ 实时预览推送效果；④ 发送测试推送。本页的「推送内容配置」会直接影响那边的预览渲染结果。",
+        "obvious_hint": true,
+        "readonly": true,
+        "default": "在 WebUI 页面中配置（插件管理 → 抖音订阅推送 → douyin_subscribe）"
+    },
+    "cookie": {
         "type": "string",
-        "description": "视频发送方式",
-        "options": [
-          "video",
-          "file"
-        ],
-        "labels": [
-          "视频发送：作为视频消息直接播放",
-          "群文件发送：作为群文件上传（适合大文件，需平台支持）"
-        ],
-        "hint": "这是与「视频发送」并列的投递方式，二选一，**不是**超限后的兜底结果。两种方式共用下面同一个「视频大小上限」。私聊或不支持群文件的平台会自动回退为视频发送。",
-        "default": "video"
-      },
-      "delivery": {
-        "type": "string",
-        "description": "视频投递方式",
-        "options": [
-          "auto",
-          "direct",
-          "download"
-        ],
-        "labels": [
-          "自动：公开作品走直链，仅自己可见的下载后发送（推荐）",
-          "始终走直链：省流量，但「仅自己可见」的作品会失败",
-          "始终先下载再发送：最稳，但每次都要下载整个视频"
-        ],
-        "hint": "实测结论：公开作品的视频直链不带 Cookie 也能正常下载，可以直接交给平台；而「仅自己可见」的作品（private_status=1）直链一律 403、也无法分享，必须由插件带 Cookie 下载后经 AstrBot 文件服务托管。自动模式会按作品可见性二选一，并且直链投递失败时还会自动改用下载重试一次。",
-        "default": "auto"
-      },
-      "size_limit_mb": {
-        "type": "int",
-        "description": "视频大小限制 (MB)",
-        "hint": "对「视频发送」和「群文件发送」**同样生效**。超过此大小的视频不再上传本体，改为发送资源直链（注意直链有时效性，见下方说明）。默认 100MB，设为 0 表示不限制。",
-        "slider": {
-          "min": 0,
-          "max": 2000,
-          "step": 10
-        },
-        "default": 100
-      },
-      "cover_on_fallback": {
+        "description": "抖音 Cookie",
+        "hint": "在浏览器登录 douyin.com 后，按 F12 → Network → 任意请求 → 复制完整 Cookie 粘贴到这里。这是插件唯一的凭证，等同于你的登录态，请勿分享。签名所需的 uifid 会自动从其中的 UIFID 字段提取，无需手动配置，也无需导出任何浏览器密钥。",
+        "obvious_hint": true,
+        "secret": true,
+        "default": ""
+    },
+    "enabled": {
         "type": "bool",
-        "description": "超限时附带封面",
-        "hint": "视频因超限改为发链接时，额外发送一张封面图，让推送不至于只剩一行字。",
+        "description": "启用轮询",
+        "hint": "关闭后停止所有后台轮询，已有订阅关系会保留，不会丢失。",
         "default": true
-      },
-      "prefer_no_watermark": {
-        "type": "bool",
-        "description": "改用 snssdk 播放接口",
-        "hint": "默认关闭：直接使用 play_addr 直链（CDN 上的真实文件地址，本身就是无水印源文件），对 NapCat 等需要自行下载的适配器最友好。开启后改用 aweme.snssdk.com 的播放接口，该地址会 302 跳转，部分 OneBot 实现处理不好会导致发送失败。",
-        "default": false
-      }
+    },
+    "content": {
+        "type": "object",
+        "description": "推送内容",
+        "hint": "默认只发送作品本体（图文发图片、视频发视频）。下面四项均为附加信息，全部默认关闭，按需开启。",
+        "items": {
+            "show_author": {
+                "type": "bool",
+                "description": "附加 1：作者",
+                "hint": "在推送中带上「【作者名】发布了新作品」这一行。",
+                "default": false
+            },
+            "show_desc": {
+                "type": "bool",
+                "description": "附加 2：简介",
+                "hint": "在推送中带上作品的文案/标题。文案过长时会自动截断。",
+                "default": false
+            },
+            "show_time": {
+                "type": "bool",
+                "description": "附加 3：发布时间",
+                "hint": "在推送中带上作品的发布时间。",
+                "default": false
+            },
+            "show_link": {
+                "type": "bool",
+                "description": "附加 4：作品链接",
+                "hint": "在推送中带上可直接点开的抖音作品链接。",
+                "default": false
+            },
+            "desc_max_length": {
+                "type": "int",
+                "description": "简介最大字数",
+                "hint": "超出部分会被截断并加省略号，避免刷屏。",
+                "slider": {
+                    "min": 20,
+                    "max": 500,
+                    "step": 10
+                },
+                "default": 100
+            },
+            "link_style": {
+                "type": "string",
+                "description": "链接形态",
+                "options": [
+                    "resource",
+                    "page"
+                ],
+                "labels": [
+                    "资源直链：CDN 上可直接下载/播放的视频文件地址",
+                    "作品网页：抖音的作品详情页"
+                ],
+                "hint": "⚠️ 风险提示：资源直链是抖音 CDN 的会话级签名地址，① 带有效期，推送发出几小时后基本失效；② 若作品被设为「仅自己可见」，直链一律 403、也无法分享；③ 公开作品的直链可以直接点开。如果你希望链接长期可打开，请选「作品网页」。",
+                "default": "resource"
+            },
+            "at_all": {
+                "type": "bool",
+                "description": "群聊中 @全体成员",
+                "hint": "仅在群聊生效，私聊忽略。请谨慎开启，容易被群友讨厌。",
+                "default": false
+            }
+        }
+    },
+    "video": {
+        "type": "object",
+        "description": "视频推送",
+        "items": {
+            "mode": {
+                "type": "string",
+                "description": "视频发送方式",
+                "options": [
+                    "video",
+                    "file"
+                ],
+                "labels": [
+                    "视频发送：作为视频消息直接播放",
+                    "群文件发送：作为群文件上传（适合大文件，需平台支持）"
+                ],
+                "hint": "这是与「视频发送」并列的投递方式，二选一，**不是**超限后的兜底结果。两种方式共用下面同一个「视频大小上限」。私聊或不支持群文件的平台会自动回退为视频发送。",
+                "default": "video"
+            },
+            "delivery": {
+                "type": "string",
+                "description": "视频投递方式",
+                "options": [
+                    "auto",
+                    "direct",
+                    "download"
+                ],
+                "labels": [
+                    "自动：公开作品走直链，仅自己可见的下载后发送（推荐）",
+                    "始终走直链：省流量，但「仅自己可见」的作品会失败",
+                    "始终先下载再发送：最稳，但每次都要下载整个视频"
+                ],
+                "hint": "实测结论：公开作品的视频直链不带 Cookie 也能正常下载，可以直接交给平台；而「仅自己可见」的作品（private_status=1）直链一律 403、也无法分享，必须由插件带 Cookie 下载后经 AstrBot 文件服务托管。自动模式会按作品可见性二选一，并且直链投递失败时还会自动改用下载重试一次。",
+                "default": "auto"
+            },
+            "size_limit_mb": {
+                "type": "int",
+                "description": "视频大小限制 (MB)",
+                "hint": "对「视频发送」和「群文件发送」**同样生效**。超过此大小的视频不再上传本体，改为发送资源直链（注意直链有时效性，见下方说明）。默认 100MB，设为 0 表示不限制。",
+                "slider": {
+                    "min": 0,
+                    "max": 2000,
+                    "step": 10
+                },
+                "default": 100
+            },
+            "cover_on_fallback": {
+                "type": "bool",
+                "description": "超限时附带封面",
+                "hint": "视频因超限改为发链接时，额外发送一张封面图，让推送不至于只剩一行字。",
+                "default": true
+            },
+            "prefer_no_watermark": {
+                "type": "bool",
+                "description": "改用 snssdk 播放接口",
+                "hint": "默认关闭：直接使用 play_addr 直链（CDN 上的真实文件地址，本身就是无水印源文件），对 NapCat 等需要自行下载的适配器最友好。开启后改用 aweme.snssdk.com 的播放接口，该地址会 302 跳转，部分 OneBot 实现处理不好会导致发送失败。",
+                "default": false
+            }
+        }
+    },
+    "polling": {
+        "type": "object",
+        "description": "轮询策略",
+        "items": {
+            "base_interval": {
+                "type": "int",
+                "description": "基础间隔 (秒)",
+                "hint": "每个账号两次检查之间的基础间隔。抖音有风控，建议不要低于 300 秒。",
+                "slider": {
+                    "min": 60,
+                    "max": 3600,
+                    "step": 30
+                },
+                "default": 300
+            },
+            "jitter": {
+                "type": "int",
+                "description": "随机抖动 (秒)",
+                "hint": "在基础间隔上叠加 0~N 秒随机值，避免多个账号在同一秒集中请求触发风控。",
+                "slider": {
+                    "min": 0,
+                    "max": 300,
+                    "step": 5
+                },
+                "default": 30
+            },
+            "adapt_interval": {
+                "type": "bool",
+                "description": "账号多时自动拉长间隔",
+                "hint": "开启后，实际间隔 = 基础间隔 × 账号数 ÷ 单轮并发，保证整体请求速率不随订阅增长而失控。订阅几十个账号时强烈建议开启。",
+                "default": true
+            },
+            "single_round_max_wait": {
+                "type": "int",
+                "description": "单轮最大等待 (秒)",
+                "hint": "自适应间隔的上限。即使订阅很多账号，也不会让某个账号超过这么久才被检查一次。",
+                "slider": {
+                    "min": 300,
+                    "max": 7200,
+                    "step": 60
+                },
+                "default": 1800
+            },
+            "max_concurrent": {
+                "type": "int",
+                "description": "单轮并发数",
+                "hint": "同一时刻最多同时请求几个账号。不建议超过 3，过高的并发更容易触发风控。",
+                "slider": {
+                    "min": 1,
+                    "max": 10,
+                    "step": 1
+                },
+                "default": 2
+            },
+            "request_timeout": {
+                "type": "int",
+                "description": "请求超时 (秒)",
+                "slider": {
+                    "min": 5,
+                    "max": 120,
+                    "step": 5
+                },
+                "default": 20
+            },
+            "error_backoff": {
+                "type": "int",
+                "description": "出错退避上限 (秒)",
+                "hint": "某个账号连续请求失败时，会按指数退避逐渐拉长它的检查间隔，最多退避到这么久。成功一次后立即恢复。",
+                "slider": {
+                    "min": 300,
+                    "max": 7200,
+                    "step": 60
+                },
+                "default": 1800
+            }
+        }
+    },
+    "subscribe": {
+        "type": "object",
+        "description": "订阅行为",
+        "items": {
+            "first_sync_push_latest": {
+                "type": "bool",
+                "description": "推送最近作品（订阅时 / 打开开关时）",
+                "hint": "开启后：订阅一个账号时会先把 TA **最近的一条**作品推给你，方便立刻确认订阅是否生效；**对已经订阅的账号同样生效**——把本来关着的这个开关打开，下一轮检查时会给每个已订阅账号补推一次最近作品。\n\n每个账号只补推一次，不会因为反复开关而重复推送；也不会把老作品在后续轮询里重复推出来（订阅时记录的历史作品始终作为去重基线）。\n\n想对某个账号重新补推，先取消订阅再重新订阅即可。",
+                "default": false
+            },
+            "first_sync_max_age_hours": {
+                "type": "int",
+                "description": "最近作品的时间范围（小时）",
+                "hint": "上述「最近作品」只有发布于 N 小时以内才会推送，订阅时和事后补推都受此限制。默认 12 小时。\n\n这个范围是必要的：如果账号很久没更新，最近一条可能是几个月前的——不设范围就会把老作品当成新作品推出来，看着像诈尸。设为 0 表示不限时间。",
+                "slider": {
+                    "min": 0,
+                    "max": 168,
+                    "step": 1
+                },
+                "default": 12
+            },
+            "first_sync_max_posts": {
+                "type": "int",
+                "description": "首次同步记录条数",
+                "hint": "订阅时拉取多少条历史作品用于建立去重基线。设为 0 表示只记录最新一条。",
+                "slider": {
+                    "min": 0,
+                    "max": 50,
+                    "step": 1
+                },
+                "default": 20
+            },
+            "max_posts_per_check": {
+                "type": "int",
+                "description": "单次检查最多推送条数",
+                "hint": "一次检查发现多个新作品时，最多推送几条，其余只做记录。防止长时间停机后恢复时刷屏。",
+                "slider": {
+                    "min": 1,
+                    "max": 20,
+                    "step": 1
+                },
+                "default": 3
+            },
+            "max_subs_per_session": {
+                "type": "int",
+                "description": "每个会话订阅上限",
+                "hint": "单个群/私聊最多能订阅多少个账号。0 表示不限制。",
+                "slider": {
+                    "min": 0,
+                    "max": 200,
+                    "step": 1
+                },
+                "default": 20
+            },
+            "admin_only": {
+                "type": "bool",
+                "description": "仅管理员可订阅",
+                "hint": "开启后，只有 AstrBot 管理员能增删订阅，普通群成员只能用查询类命令。",
+                "default": false
+            }
+        }
+    },
+    "advanced": {
+        "type": "object",
+        "description": "高级",
+        "items": {
+            "debug": {
+                "type": "bool",
+                "description": "调试日志",
+                "hint": "输出签名、请求耗时、原始响应长度等细节，排查问题时开启。",
+                "default": false
+            }
+        }
     }
-  },
-  "polling": {
-    "type": "object",
-    "description": "轮询策略",
-    "items": {
-      "base_interval": {
-        "type": "int",
-        "description": "基础间隔 (秒)",
-        "hint": "每个账号两次检查之间的基础间隔。抖音有风控，建议不要低于 300 秒。",
-        "slider": {
-          "min": 60,
-          "max": 3600,
-          "step": 30
-        },
-        "default": 300
-      },
-      "jitter": {
-        "type": "int",
-        "description": "随机抖动 (秒)",
-        "hint": "在基础间隔上叠加 0~N 秒随机值，避免多个账号在同一秒集中请求触发风控。",
-        "slider": {
-          "min": 0,
-          "max": 300,
-          "step": 5
-        },
-        "default": 30
-      },
-      "adapt_interval": {
-        "type": "bool",
-        "description": "账号多时自动拉长间隔",
-        "hint": "开启后，实际间隔 = 基础间隔 × 账号数 ÷ 单轮并发，保证整体请求速率不随订阅增长而失控。订阅几十个账号时强烈建议开启。",
-        "default": true
-      },
-      "single_round_max_wait": {
-        "type": "int",
-        "description": "单轮最大等待 (秒)",
-        "hint": "自适应间隔的上限。即使订阅很多账号，也不会让某个账号超过这么久才被检查一次。",
-        "slider": {
-          "min": 300,
-          "max": 7200,
-          "step": 60
-        },
-        "default": 1800
-      },
-      "max_concurrent": {
-        "type": "int",
-        "description": "单轮并发数",
-        "hint": "同一时刻最多同时请求几个账号。不建议超过 3，过高的并发更容易触发风控。",
-        "slider": {
-          "min": 1,
-          "max": 10,
-          "step": 1
-        },
-        "default": 2
-      },
-      "request_timeout": {
-        "type": "int",
-        "description": "请求超时 (秒)",
-        "slider": {
-          "min": 5,
-          "max": 120,
-          "step": 5
-        },
-        "default": 20
-      },
-      "error_backoff": {
-        "type": "int",
-        "description": "出错退避上限 (秒)",
-        "hint": "某个账号连续请求失败时，会按指数退避逐渐拉长它的检查间隔，最多退避到这么久。成功一次后立即恢复。",
-        "slider": {
-          "min": 300,
-          "max": 7200,
-          "step": 60
-        },
-        "default": 1800
-      }
-    }
-  },
-  "subscribe": {
-    "type": "object",
-    "description": "订阅行为",
-    "items": {
-      "first_sync_push_latest": {
-        "type": "bool",
-        "description": "首次订阅时推送最近作品",
-        "hint": "开启后，订阅一个抖音账号时会先把 TA **最近的一条**作品推给你，方便立刻确认订阅是否生效。关闭则只静默记录基线，不推送任何历史作品。\n\n无论开不开，订阅时都会记录历史作品作为去重基线——不会因为开启它而把老作品在后续轮询里重复推出来。",
-        "default": false
-      },
-      "first_sync_max_age_hours": {
-        "type": "int",
-        "description": "首次推送的时间范围（小时）",
-        "hint": "仅当上面那条「最近作品」发布于 N 小时以内时才推送。默认 12 小时。\n\n这个范围是必要的：如果订阅一个很久没更新的账号，最近一条可能是几个月前的——不设范围就会把老作品当成新作品推出来，看着像诈尸。设为 0 表示不限时间。",
-        "slider": {
-          "min": 0,
-          "max": 168,
-          "step": 1
-        },
-        "default": 12
-      },
-      "first_sync_max_posts": {
-        "type": "int",
-        "description": "首次同步记录条数",
-        "hint": "订阅时拉取多少条历史作品用于建立去重基线。设为 0 表示只记录最新一条。",
-        "slider": {
-          "min": 0,
-          "max": 50,
-          "step": 1
-        },
-        "default": 20
-      },
-      "max_posts_per_check": {
-        "type": "int",
-        "description": "单次检查最多推送条数",
-        "hint": "一次检查发现多个新作品时，最多推送几条，其余只做记录。防止长时间停机后恢复时刷屏。",
-        "slider": {
-          "min": 1,
-          "max": 20,
-          "step": 1
-        },
-        "default": 3
-      },
-      "max_subs_per_session": {
-        "type": "int",
-        "description": "每个会话订阅上限",
-        "hint": "单个群/私聊最多能订阅多少个账号。0 表示不限制。",
-        "slider": {
-          "min": 0,
-          "max": 200,
-          "step": 1
-        },
-        "default": 20
-      },
-      "admin_only": {
-        "type": "bool",
-        "description": "仅管理员可订阅",
-        "hint": "开启后，只有 AstrBot 管理员能增删订阅，普通群成员只能用查询类命令。",
-        "default": false
-      }
-    }
-  },
-  "advanced": {
-    "type": "object",
-    "description": "高级",
-    "items": {
-      "debug": {
-        "type": "bool",
-        "description": "调试日志",
-        "hint": "输出签名、请求耗时、原始响应长度等细节，排查问题时开启。",
-        "default": false
-      }
-    }
-  }
 }

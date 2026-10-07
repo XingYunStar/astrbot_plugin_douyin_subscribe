@@ -116,6 +116,7 @@ class SubscriptionStore:
                 "avatar": "",
                 "seen": [],
                 "initialized": False,
+                "latest_synced": False,
                 "last_check": 0,
                 "fail_count": 0,
                 "next_check": 0,
@@ -161,6 +162,19 @@ class SubscriptionStore:
 
     def is_initialized(self, sec_uid: str) -> bool:
         return bool(self._account(sec_uid).get("initialized"))
+
+    def set_latest_synced(self, sec_uid: str, value: bool = True) -> None:
+        """标记「最近作品」是否已处理过。
+
+        与 ``initialized`` 的区别：``initialized`` 只关心去重基线有没有建立，
+        而本标记关心「开关打开时该不该补推一条最近作品」。订阅时开关若是关的，
+        这里保持 ``False``，之后用户把开关打开就能补推一次；推过（或判定为
+        超出时间范围）之后置 ``True``，保证同一个账号不重复补推。
+        """
+        self._account(sec_uid)["latest_synced"] = value
+
+    def is_latest_synced(self, sec_uid: str) -> bool:
+        return bool(self._account(sec_uid).get("latest_synced"))
 
     # -- 轮询调度辅助 -------------------------------------------------------
 
