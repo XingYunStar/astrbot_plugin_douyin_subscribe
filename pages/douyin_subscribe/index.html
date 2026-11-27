@@ -265,6 +265,22 @@
       <option value="page">作品网页（长期可打开）</option>
     </select>
   </div>
+  <div class="row" style="margin-top:10px">
+    <label class="chk" title="关闭时：每段动图各发一条视频；开启时：全部动图拼成一个视频再发">
+      <input type="checkbox" id="cfg_merge_live" /> 动态图文：把动图合并成一个视频
+    </label>
+    <span class="note" style="margin:0;font-size:12px">关闭＝每段动图单独发一条视频；开启＝用 ffmpeg 拼成一个，避免刷屏</span>
+  </div>
+  <div class="row" style="margin-top:10px;align-items:flex-start">
+    <span style="font-size:13px;padding-top:7px;white-space:nowrap">屏蔽关键词</span>
+    <textarea id="cfg_block_keywords" rows="3"
+              placeholder="命中任一关键词的作品不会推送。每行一个，或用中英文逗号分隔"
+              style="flex:1;min-width:240px;resize:vertical;font-family:inherit;line-height:1.5"></textarea>
+    <span class="note" style="margin:0;font-size:12px;max-width:220px">匹配作品<b>文案</b>，不区分大小写；留空＝不屏蔽</span>
+  </div>
+  <div class="note" style="margin:8px 0 0">
+    图文与动态图文统一用<b>群聊聊天记录卡片（合并转发）</b>发送，文本和全部图片都在同一张卡片里。
+  </div>
 
   <h2 style="margin-top:18px">视频推送</h2>
   <div class="row">
@@ -677,10 +693,26 @@
       + `时间${opt.show_time ? "✓" : "✗"}　链接${opt.show_link ? "✓" : "✗"}　`
       + `投递 ${opt.video_mode === "file" ? "群文件" : "视频"}　上限 ${esc(opt.size_limit_mb)}MB`
       + `</div>`;
+    if (d.skipped_blocked) {
+      html += `<div class="note" style="color:var(--warn)">`
+        + `🚫 已跳过 ${d.skipped_blocked} 条命中屏蔽关键词的作品（它们不占预览名额）`
+        + `</div>`;
+    }
 
     d.previews.forEach((pv, idx) => {
       const p = pv.post, plan = pv.plan;
       if (d.previews.length > 1) html += `<div class="note" style="margin-top:14px">第 ${idx + 1} 条</div>`;
+      if (pv.blocked_keyword) {
+        // 命中屏蔽关键词 → 这条不会推送。不渲染消息气泡，直接给一张「已屏蔽」卡，
+        // 避免让人误以为马上要发出去。
+        html += `<div class="warnbox" style="border-left:4px solid var(--warn)">`
+          + `<div style="font-weight:600;margin-bottom:4px">🚫 已被屏蔽，不会推送</div>`
+          + `作品文案命中屏蔽关键词「<b>${esc(pv.blocked_keyword)}</b>」。`
+          + `<div class="meta" style="margin-top:6px;opacity:.85">`
+          + `文案：${esc((p.desc || "（无）").slice(0, 120))}</div>`
+          + `</div>`;
+        return;                       // 本条的媒体/文本都不再渲染
+      }
       html += `<div class="chat"><div class="bubble">`;
 
       // 文本：后端按字段结构化返回，这里逐行上对应的底色
@@ -699,12 +731,38 @@
       const chain = pv.chain || [];
       const f = chain.find(s => s.type === "File");
       const hasVideo = chain.some(s => s.type === "Video");
+      const card = chain.find(s => s.type === "Nodes");
       const imgCount = p.images ? p.images.length : 0;
+      const liveCount = p.live_count || 0;
+      const videoSegs = chain.filter(s => s.type === "Video").length;
 
       if (f) {
         html += `<div class="filebox"><span class="ico">📄</span><div>`
           + `<div>${esc(f.name || "video.mp4")}</div>`
           + `<div class="meta">作为群文件上传</div></div></div>`;
+      } else if (card) {
+        // 图文 / 动态图文 → 群聊聊天记录卡片（合并转发）
+        html += `<div style="border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:10px">`
+          + `<div style="background:var(--soft);padding:8px 10px;font-size:13px;font-weight:600">`
+          + `📋 ${esc(card.title || "群聊聊天记录")}　`
+          + `<span style="font-weight:400;color:var(--muted)">${card.node_count || 0} 条</span></div>`
+          + `<div style="padding:10px">`;
+        if (imgCount) {
+          html += `<div class="imgs">` + p.images.slice(0, 12).map(u =>
+            `<img data-url="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" alt="" onerror="this.style.opacity=.3">`).join("") + `</div>`;
+          if (imgCount > 12) html += `<div class="meta">…共 ${imgCount} 张</div>`;
+        }
+        html += `</div></div>`;
+        if (liveCount) {
+          const merged = videoSegs === 1 && liveCount > 1;
+          html += `<div class="meta" style="color:var(--ok,#2a9d5c);margin-top:6px">`
+            + (merged
+                ? `🎞 动态图文：${liveCount} 段动图已合并为 1 个视频发送`
+                : `🎞 动态图文：附带 ${liveCount} 段动图，将逐条发送 ${videoSegs} 条视频`)
+            + `</div>`;
+        } else if (imgCount) {
+          html += `<div class="meta" style="margin-top:6px">🖼 图文：文本与 ${imgCount} 张图都在同一张卡片里</div>`;
+        }
       } else if (hasVideo) {
         html += `<video controls preload="none" data-url="${esc(p.no_watermark_url || p.video_url)}" referrerpolicy="no-referrer"></video>`;
       } else if (imgCount && !plan.degraded) {
@@ -763,7 +821,7 @@
   }
 
   // ================= 配置 =================
-  const BOOLS = ["show_author", "show_desc", "show_time", "show_link", "at_all"];
+  const BOOLS = ["show_author", "show_desc", "show_time", "show_link", "at_all", "merge_live"];
   async function loadConfig() {
     suppressAutoSave = true;   // 回填表单时不要触发自动保存
     try {
@@ -786,6 +844,7 @@
       $("cfg_first_sync_max_age_hours").value = sub.first_sync_max_age_hours ?? 12;
       $("cfg_admin_only").checked = !!sub.admin_only;
       $("cfg_debug").checked = !!adv.debug;
+      $("cfg_block_keywords").value = content.block_keywords || "";
       setCookieNote(c.cookie || "");
     } catch (e) {
       setSaveState("✗ 读取配置失败：" + (e.message || e), "saving");
@@ -890,6 +949,7 @@
         },
         advanced: { debug: $("cfg_debug").checked },
       };
+      payload.content.block_keywords = $("cfg_block_keywords").value;
       BOOLS.forEach(k => { payload.content[k] = $("cfg_" + k).checked; });
 
       await bridge.apiPost("config", payload);
@@ -905,7 +965,8 @@
 
   const AUTOSAVE_IDS = [
     "cfg_show_author", "cfg_show_desc", "cfg_show_time", "cfg_show_link", "cfg_at_all",
-    "cfg_desc_max_length", "cfg_link_style",
+    "cfg_merge_live",
+    "cfg_desc_max_length", "cfg_link_style", "cfg_block_keywords",
     "cfg_video_mode", "cfg_size_limit_mb", "cfg_cover_on_fallback",
     "cfg_prefer_no_watermark", "cfg_delivery",
     "cfg_base_interval", "cfg_jitter", "cfg_max_concurrent", "cfg_adapt_interval",
@@ -920,6 +981,8 @@
       el.addEventListener(immediate ? "change" : "change", () => scheduleSave(immediate ? 120 : 500));
       // 勾选框/下拉框点一下就想马上存；数字框在输入时也防抖保存
       if (el.type === "number") el.addEventListener("input", () => scheduleSave(700));
+      // 多行文本（屏蔽关键词）边输边存，不用等失焦
+      if (el.tagName === "TEXTAREA") el.addEventListener("input", () => scheduleSave(900));
     });
   }
 

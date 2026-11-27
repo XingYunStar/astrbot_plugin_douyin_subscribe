@@ -31,7 +31,7 @@ except Exception:  # pragma: no cover - 仅在非 AstrBot 环境下触发
 
 from astrbot.api import logger
 
-from .douyin_api import DouyinError, DouyinPost
+from .douyin_api import DouyinError, DouyinPost, extract_aweme_id
 from .pusher import PushOptions, split_chain
 
 if TYPE_CHECKING:
@@ -39,7 +39,10 @@ if TYPE_CHECKING:
 
 PLUGIN_NAME = "astrbot_plugin_douyin_subscribe"
 
-_AWEME_ID_RE = re.compile(r"(?:/video/|^)(\d{15,25})")
+#: 测试推送/预览时最多往下翻多少条——命中屏蔽关键词的作品会被跳过、
+#: 不占名额，所以要留出足够的余量
+_SCAN_EXTRA = 20
+_TEST_PUSH_SCAN = 10
 
 #: 允许代理取回头像的域名后缀。头像一律由服务端取回并转成 data URI，
 #: 让浏览器完全不发外部请求——这样能绕开 iframe sandbox / CSP / 广告拦截 /
@@ -379,6 +382,8 @@ class PageApi:
                     "show_link",
                     "at_all",
                     "link_style",
+                    "merge_live",
+                    "block_keywords",
                 ),
             ),
             ("video", ("mode", "cover_on_fallback", "prefer_no_watermark", "delivery")),
@@ -755,6 +760,7 @@ class PageApi:
         plugin = self.plugin
         # 允许指定具体作品（aweme_id），便于分别测试视频与图文
         aweme_id = str(body.get("aweme_id") or "").strip()
+        opt = plugin._push_options()
         try:
             client = plugin._client_or_raise()
             if aweme_id:
@@ -767,21 +773,44 @@ class PageApi:
                     if not subs:
                         return self._fail("该会话还没有订阅，无法取用作品")
                     sec_uid = subs[0]
-                posts = await client.fetch_posts(sec_uid, limit=1)
+                # 多拉几条：命中屏蔽词的作品要跳过、不占测试推送这个名额
+                posts = await client.fetch_posts(sec_uid, limit=_TEST_PUSH_SCAN)
         except DouyinError as exc:
             return self._fail(f"获取作品失败：{exc}")
         if not posts:
             return self._fail("没有取到作品")
 
-        post = posts[0]
         builder = plugin._builder
         if builder is None:
             return self._fail("推送模块尚未就绪")
 
+        if aweme_id:
+            # 指定了具体作品：命中屏蔽词就直接说明，没有「下一条」可以顺延
+            hit = opt.matched_keyword(posts[0].desc)
+            if hit:
+                return self._fail(
+                    f"该作品文案命中屏蔽关键词「{hit}」，按当前配置不会被推送。"
+                    "（测试推送也遵守屏蔽规则；想测这条请先从「屏蔽关键词」里去掉它）"
+                )
+            post = posts[0]
+            skipped_note = ""
+        else:
+            # 未指定作品：跳过命中屏蔽词的作品，取第一条可推送的
+            kept, skipped = self._pick_unblocked(posts, opt, limit=1)
+            if not kept:
+                return self._fail(
+                    f"该账号最近的 {len(posts)} 条作品全部命中屏蔽关键词，"
+                    "没有可推送的作品。想测试请先从「屏蔽关键词」里去掉相关词。"
+                )
+            post = kept[0]
+            skipped_note = (
+                f"（已跳过 {skipped} 条命中屏蔽关键词的作品）" if skipped else ""
+            )
+
         is_group = ":GroupMessage:" in umo
         degraded_note = ""
         try:
-            plan = await builder.build(post, plugin._push_options(), is_group=is_group)
+            plan = await builder.build(post, opt, is_group=is_group)
             chunks = split_chain(plan.chain)
             ok = False
             for chunk in chunks:
@@ -811,7 +840,7 @@ class PageApi:
         plugin._stats["pushes"] += 1
         return self._ok(
             {"umo": umo, "aweme_id": post.aweme_id, "plan": plan.describe()},
-            f"已向 {umo} 发送测试推送{degraded_note}",
+            f"已向 {umo} 发送测试推送{degraded_note}{skipped_note}",
         )
 
     @staticmethod
@@ -852,21 +881,23 @@ class PageApi:
         except DouyinError as exc:
             return self._fail(str(exc))
 
+        opt = PushOptions.from_config(plugin.config)
+        if mode in ("video", "file"):
+            opt.video_mode = mode
+
         # ---- 取出作品 ----
         posts: list[DouyinPost] = []
         account_info: dict[str, Any] = {}
-        # 作品链接（/video/<id>）或纯数字作品 ID 都按作品解析，其余按账号解析
-        aweme_match = _AWEME_ID_RE.search(target)
-        is_aweme = bool(
-            aweme_match
-            and (
-                "/video/" in target
-                or re.fullmatch(r"\d{15,25}", target)
-            )
-        )
+        # 作品链接都按作品解析：/video/<id>、/note/<id>、?modal_id=<id>、纯数字 ID。
+        # 其余（主页链接、抖音号）按账号解析。
+        aweme_id = extract_aweme_id(target)
+        # 设了屏蔽关键词时要多拉几条：命中的会被跳过、不占这 limit 个名额
+        fetch_limit = limit
+        if not aweme_id and opt.block_keywords:
+            fetch_limit = min(limit + _SCAN_EXTRA, 30)
         try:
-            if is_aweme:
-                posts = [await client.fetch_detail(aweme_match.group(1))]
+            if aweme_id:
+                posts = [await client.fetch_detail(aweme_id)]
             else:
                 account = await client.resolve_account(target)
                 account_info = {
@@ -878,17 +909,27 @@ class PageApi:
                     "follower_count": account.follower_count,
                     "profile_url": account.profile_url,
                 }
-                posts = await client.fetch_posts(account.sec_uid, limit=limit)
+                posts = await client.fetch_posts(
+                    account.sec_uid, limit=fetch_limit
+                )
         except DouyinError as exc:
             return self._fail(f"解析失败：{exc}")
 
         if not posts:
             return self._fail("没有取到任何作品（账号可能没有公开发布，或触发了风控）")
 
-        # ---- 组装预览 ----
-        opt = PushOptions.from_config(plugin.config)
-        if mode in ("video", "file"):
-            opt.video_mode = mode
+        # 按账号解析时跳过命中屏蔽关键词的作品——被屏蔽的不占预览名额，
+        # 顺延到后面的作品。指定了具体作品（aweme_id）则原样展示，好让用户
+        # 看到「这条为什么被拦」。
+        skipped_blocked = 0
+        if not aweme_id:
+            kept, skipped_blocked = self._pick_unblocked(posts, opt, limit=limit)
+            if not kept:
+                return self._fail(
+                    f"该账号最近的 {len(posts)} 条作品全部命中屏蔽关键词，"
+                    "没有可预览的内容。想预览请先从「屏蔽关键词」里去掉相关词。"
+                )
+            posts = kept
 
         builder = plugin._builder
         if builder is None:
@@ -896,6 +937,29 @@ class PageApi:
 
         previews: list[dict[str, Any]] = []
         for post in posts:
+            # 命中屏蔽关键词 → 实际不会推送。这里不去下载任何媒体，只回一条
+            # 明确的「已被屏蔽」结果，既省时间也不会让人误以为即将推送。
+            blocked = opt.matched_keyword(post.desc)
+            if blocked:
+                previews.append(
+                    {
+                        "post": post.to_public_dict(),
+                        "plan": {
+                            "text": "",
+                            "media_kind": "blocked",
+                            "media_count": 0,
+                            "text_in_card": False,
+                            "live_count": 0,
+                            "video_size_mb": 0,
+                            "degraded": False,
+                            "notes": [],
+                            "lines": [],
+                        },
+                        "chain": [],
+                        "blocked_keyword": blocked,
+                    }
+                )
+                continue
             try:
                 plan = await builder.build(
                     post, opt, is_group=True, force_link=force_link
@@ -908,6 +972,9 @@ class PageApi:
                     "post": post.to_public_dict(),
                     "plan": plan.describe(),
                     "chain": self._describe_chain(plan.chain),
+                    # 命中屏蔽关键词的作品不会真的推送，预览里标出来，
+                    # 免得用户以为订阅漏了
+                    "blocked_keyword": opt.matched_keyword(post.desc),
                 }
             )
 
@@ -919,6 +986,8 @@ class PageApi:
                 "account": account_info,
                 "options": self._options_dict(opt),
                 "previews": previews,
+                # 本次预览跳过了多少条命中屏蔽关键词的作品
+                "skipped_blocked": skipped_blocked,
                 "size_limit_mb": opt.size_limit_mb,
             }
         )
@@ -943,6 +1012,28 @@ class PageApi:
         }
 
     @staticmethod
+    def _pick_unblocked(
+        posts: list[DouyinPost], opt: PushOptions, limit: int = 0
+    ) -> tuple[list[DouyinPost], int]:
+        """挑出未被屏蔽关键词命中的作品，返回 ``(选中列表, 跳过条数)``。
+
+        被屏蔽的作品**不占名额**：`limit` > 0 时一直往下找，直到凑够 limit 条
+        未屏蔽的作品，或列表到底（相当于"全部被跳过就停"）。
+        """
+        if not opt.block_keywords:
+            return (posts[:limit] if limit > 0 else list(posts)), 0
+        kept: list[DouyinPost] = []
+        skipped = 0
+        for item in posts:
+            if opt.matched_keyword(item.desc):
+                skipped += 1
+                continue
+            kept.append(item)
+            if limit > 0 and len(kept) >= limit:
+                break
+        return kept, skipped
+
+    @staticmethod
     def _describe_chain(chain) -> list[dict[str, Any]]:
         """把消息链转成前端可读的结构。"""
         out: list[dict[str, Any]] = []
@@ -958,5 +1049,25 @@ class PageApi:
             elif name == "File":
                 item["name"] = getattr(seg, "name", "")
                 item["url"] = getattr(seg, "url", "")
+            elif name == "Nodes":
+                # 合并转发卡片：把每个节点里的段拆出来，前端好展示
+                nodes = []
+                for node in getattr(seg, "nodes", []) or []:
+                    parts = []
+                    for comp in getattr(node, "content", []) or []:
+                        cname = type(comp).__name__
+                        if cname == "Plain":
+                            parts.append({"type": "Plain", "text": getattr(comp, "text", "")})
+                        elif cname == "Image":
+                            parts.append({"type": "Image", "url": getattr(comp, "file", "")})
+                        else:
+                            parts.append({"type": cname})
+                    nodes.append({
+                        "name": getattr(node, "name", "") or "",
+                        "parts": parts,
+                    })
+                item["title"] = "群聊聊天记录"
+                item["nodes"] = nodes
+                item["node_count"] = len(nodes)
             out.append(item)
         return out

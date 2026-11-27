@@ -425,10 +425,13 @@ class DouyinSubscribePlugin(Star):
     async def _push_latest_once(
         self, sec_uid: str, posts: list[DouyinPost], only_umo: str | None = None
     ) -> str:
-        """推送账号的**最近一条**作品，受「首次推送的时间范围」约束。
+        """推送账号的**最近一条有效作品**，受「首次推送的时间范围」约束。
 
         只推最近一条、且要落在设定时间范围内，是为了避免订阅一个久未更新的
         账号时，把很久以前的老作品当成新作品推出来，看着像诈尸。
+
+        **命中屏蔽关键词的作品会被跳过、不占「最近一条」这个名额**：一路往下找
+        到第一条未被屏蔽、且仍在时间范围内的作品。全部命中屏蔽词时才放弃并说明。
 
         返回一句人类可读的结果说明（供订阅回执/日志使用）；推送失败会抛异常，
         由调用方决定怎么记录。
@@ -439,17 +442,34 @@ class DouyinSubscribePlugin(Star):
         max_age_hours = float(
             self._cfg("subscribe", "first_sync_max_age_hours", default=12) or 0
         )
-        latest = max(posts, key=lambda p: p.create_time)
-        age_hours = max((time.time() - float(latest.create_time or 0)) / 3600.0, 0.0)
+        opt = self._push_options()
+        skipped: list[str] = []
 
-        if max_age_hours > 0 and age_hours > max_age_hours:
-            return (
-                f"最近一条作品发布于 {age_hours:.1f} 小时前，"
-                f"超出 {max_age_hours:g} 小时范围，未推送"
+        for post in sorted(posts, key=lambda p: p.create_time, reverse=True):
+            hit = opt.matched_keyword(post.desc)
+            if hit:
+                skipped.append(hit)
+                continue
+
+            age_hours = max(
+                (time.time() - float(post.create_time or 0)) / 3600.0, 0.0
             )
+            if max_age_hours > 0 and age_hours > max_age_hours:
+                # 再往下只会更旧，没必要继续找
+                tail = f"（此前已跳过 {len(skipped)} 条命中屏蔽关键词的作品）" if skipped else ""
+                return (
+                    f"最近一条作品发布于 {age_hours:.1f} 小时前，"
+                    f"超出 {max_age_hours:g} 小时范围，未推送{tail}"
+                )
 
-        await self._push_post(sec_uid, latest, only_umo=only_umo)
-        return f"已推送最近一条作品（发布于 {age_hours:.1f} 小时前）"
+            await self._push_post(sec_uid, post, only_umo=only_umo)
+            note = f"已推送最近一条作品（发布于 {age_hours:.1f} 小时前）"
+            if skipped:
+                note += f"；已跳过 {len(skipped)} 条命中屏蔽关键词的作品"
+            return note
+
+        uniq = "、".join(dict.fromkeys(skipped))
+        return f"该账号最近的 {len(skipped)} 条作品全部命中屏蔽关键词「{uniq}」，未推送"
 
     async def _push_post(
         self, sec_uid: str, post: DouyinPost, only_umo: str | None = None
@@ -460,13 +480,23 @@ class DouyinSubscribePlugin(Star):
         避免因为一个人新订阅就把历史作品广播给所有老订阅者。
         """
         assert self._builder is not None
+        opt = self._push_options()
+
+        # 屏蔽关键词：文案命中任一关键词就整条跳过。新作品推送和订阅回执都走
+        # 这个函数，所以在这一处拦下即可全部生效。
+        hit = opt.matched_keyword(post.desc)
+        if hit:
+            logger.info(
+                f"[抖音订阅] 作品 {post.aweme_id} 文案命中屏蔽关键词「{hit}」，已跳过推送"
+            )
+            return
+
         if only_umo:
             subscribers = [only_umo]
         else:
             subscribers = self.store.subscribers_of(sec_uid)
         if not subscribers:
             return
-        opt = self._push_options()
 
         logger.info(
             f"[抖音订阅] {post.author.nickname or sec_uid[:12]} 新{post.kind}"
@@ -482,6 +512,22 @@ class DouyinSubscribePlugin(Star):
                 continue
 
             delivered, err = await self._send_plan(umo, plan)
+
+            # 合并转发卡片发不出去（协议端不支持 node 段）→ 退回逐张发送图片
+            if not delivered and plan.media_kind == "card":
+                logger.info(
+                    f"[抖音订阅] 合并转发卡片发送失败（{err}），改为逐张发送：{umo}"
+                )
+                try:
+                    plain_plan = await self._builder.build(
+                        post, opt, is_group=is_group, force_plain_images=True
+                    )
+                except Exception as exc:
+                    plain_plan = None
+                    logger.warning(f"[抖音订阅] 退回逐张发送失败：{exc}")
+                if plain_plan is not None:
+                    delivered, err = await self._send_plan(umo, plain_plan)
+                    plan = plain_plan
 
             # 直链投递失败时（常见于作品被设为「仅自己可见」，或平台下载受限），
             # 再用「先下载再投递」重试一次，这一步能救回绝大多数失败。

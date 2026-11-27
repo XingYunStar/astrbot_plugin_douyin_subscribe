@@ -78,6 +78,32 @@ UIFID_COOKIE_KEYS = ("UIFID", "UIFID_TEMP", "uifid", "uifid_temp", "uifidtemp", 
 
 _SEC_UID_RE = re.compile(r"MS4wLjABAAAA[A-Za-z0-9_\-]+")
 _TRAILING_ID_RE = re.compile(r"(\d{15,25})")
+#: 作品链接的几种形态
+_VIDEO_ID_RE = re.compile(r"/(?:video|note|slides)/(\d{15,25})")
+_MODAL_ID_RE = re.compile(r"[?&]modal_id=(\d{15,25})")
+
+
+def extract_aweme_id(text: str) -> str:
+    """从链接或纯数字里抠出作品 ID，抠不到返回空串。
+
+    抖音的作品链接不止一种形态，实测遇到过的：
+
+    * ``https://www.douyin.com/video/<id>``
+    * ``https://www.douyin.com/note/<id>``
+    * ``https://www.douyin.com/user/self?...&modal_id=<id>``
+      —— 在自己的主页里点开某条作品，地址栏就是这个样子。
+      它既不是 ``/video/`` 也没有 sec_uid，早期版本会直接解析失败。
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+    if re.fullmatch(r"\d{15,25}", s):
+        return s
+    for rx in (_VIDEO_ID_RE, _MODAL_ID_RE):
+        m = rx.search(s)
+        if m:
+            return m.group(1)
+    return ""
 
 
 class DouyinError(Exception):
@@ -128,6 +154,9 @@ class DouyinPost:
     create_time: int = 0
     is_image: bool = False
     images: list[str] = field(default_factory=list)
+    #: 「动态图文」每张图附带的那段动图（MP4），与 :attr:`images` 一一对应；
+    #: 非动图的位置是空串。抖音的「实况」类作品每张图都带一个 2~5 秒的短视频。
+    image_videos: list[str] = field(default_factory=list)
     video_url: str = ""
     video_uri: str = ""
     cover_url: str = ""
@@ -149,7 +178,23 @@ class DouyinPost:
 
     @property
     def kind(self) -> str:
-        return "图文" if self.is_image else "视频"
+        if not self.is_image:
+            return "视频"
+        return "动态图文" if self.is_live else "图文"
+
+    @property
+    def is_live(self) -> bool:
+        """是否为「动态图文」：图片作品里每张图还附带一段动图（MP4）。
+
+        抖音把这类作品叫「实况/动图」，接口上表现为 ``aweme_type=68``、
+        ``images[*].video.play_addr`` 有值。普通图文该项为空。
+        """
+        return self.is_image and any(self.image_videos)
+
+    @property
+    def live_videos(self) -> list[str]:
+        """只挑出有动图的那些 URL（保持原有顺序）。"""
+        return [u for u in self.image_videos if u]
 
     @property
     def is_private(self) -> bool:
@@ -225,6 +270,8 @@ class DouyinPost:
             else "",
             "images": list(self.images),
             "image_count": len(self.images),
+            "is_live": self.is_live,
+            "live_count": len(self.live_videos),
             "video_url": self.video_url,
             "video_uri": self.video_uri,
             "no_watermark_url": self.no_watermark_url(),
@@ -341,10 +388,16 @@ def parse_post(data: dict[str, Any]) -> DouyinPost:
     images_raw = data.get("images") or []
 
     images: list[str] = []
+    image_videos: list[str] = []
     for item in images_raw:
         url = _first_url(item)
-        if url:
-            images.append(url)
+        if not url:
+            # 拿不到静态图就整条跳过，动图也跟着跳——两个列表必须一一对应，
+            # 否则后面按索引取动图会错位
+            continue
+        images.append(url)
+        play = (item.get("video") or {}).get("play_addr") or {}
+        image_videos.append(_first_url(play))
 
     # 图文判定：有 images 就是图文（aweme_type 68 亦可，但 images 更可靠）
     is_image = bool(images)
@@ -356,6 +409,7 @@ def parse_post(data: dict[str, Any]) -> DouyinPost:
         create_time=int(data.get("create_time") or 0),
         is_image=is_image,
         images=images,
+        image_videos=image_videos,
         video_url=_first_url(video.get("play_addr")),
         video_uri=str((video.get("play_addr") or {}).get("uri") or ""),
         cover_url=_first_url(video.get("cover")) or _first_url(video.get("origin_cover")),
@@ -649,24 +703,24 @@ class DouyinClient:
 
         # 2) 短链 / 任意链接 -> 跟随跳转找 sec_uid
         if text.startswith("http"):
-            resolved = await self._resolve_redirect(text)
-            if resolved:
-                m = _SEC_UID_RE.search(resolved)
-                if m:
-                    sec_uid = m.group(0)
-                    try:
-                        return await self.fetch_profile(sec_uid)
-                    except DouyinError:
-                        return DouyinAccount(sec_uid=sec_uid)
-                # 可能是作品短链 -> 取作者
-                mm = _TRAILING_ID_RE.search(resolved)
-                if mm and "/video/" in resolved:
-                    post = await self.fetch_detail(mm.group(1))
-                    if post.author.sec_uid:
-                        return post.author
+            resolved = await self._resolve_redirect(text) or text
+            m = _SEC_UID_RE.search(resolved)
+            if m:
+                sec_uid = m.group(0)
+                try:
+                    return await self.fetch_profile(sec_uid)
+                except DouyinError:
+                    return DouyinAccount(sec_uid=sec_uid)
+            # 作品链接（/video/、/note/、?modal_id=）-> 取作者
+            aweme_id = extract_aweme_id(resolved)
+            if aweme_id:
+                post = await self.fetch_detail(aweme_id)
+                if post.author.sec_uid:
+                    return post.author
             raise DouyinError(
                 "无法从该链接解析出账号。请改用账号主页链接"
-                "（形如 https://www.douyin.com/user/MS4wLjABAAAA... ）。"
+                "（形如 https://www.douyin.com/user/MS4wLjABAAAA... ），"
+                "或直接给作品链接 / 抖音号。"
             )
 
         # 3) 先按抖音号精确解析（可靠），失败再退回站内搜索（可能被限流）
