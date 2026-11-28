@@ -157,6 +157,8 @@ class DouyinPost:
     #: 「动态图文」每张图附带的那段动图（MP4），与 :attr:`images` 一一对应；
     #: 非动图的位置是空串。抖音的「实况」类作品每张图都带一个 2~5 秒的短视频。
     image_videos: list[str] = field(default_factory=list)
+    #: 作品用的背景音乐（mp3）。抖音的图文作品里，``aweme.video.play_addr`` 指的就是它。
+    music_url: str = ""
     video_url: str = ""
     video_uri: str = ""
     cover_url: str = ""
@@ -272,6 +274,9 @@ class DouyinPost:
             "image_count": len(self.images),
             "is_live": self.is_live,
             "live_count": len(self.live_videos),
+            # 动图（MP4）的 CDN 直链，供 WebUI 预览直接播放第一段做样片
+            "live_videos": self.live_videos,
+            "music_url": self.music_url,
             "video_url": self.video_url,
             "video_uri": self.video_uri,
             "no_watermark_url": self.no_watermark_url(),
@@ -402,6 +407,26 @@ def parse_post(data: dict[str, Any]) -> DouyinPost:
     # 图文判定：有 images 就是图文（aweme_type 68 亦可，但 images 更可靠）
     is_image = bool(images)
 
+    # 图文的 aweme.video 往往**不是视频而是背景音乐**——实测 play_addr 指向
+    # audio/mpeg 的 .mp3。照它填 video_url 会带来两个问题：
+    #   1. 预览里的 <video> 放不出来（源是 mp3）；
+    #   2. no_watermark_url() 拿这串拼出无意义的地址。
+    # 图文真正的动态内容在每张图的 image_videos 里，所以图文一律不填这两个字段。
+    music = data.get("music") or {}
+    music_url = _first_url(music.get("play_url") or {})
+
+    if is_image:
+        post_video_url = ""
+        post_video_uri = ""
+        post_duration = 0
+        # 图文作品没有视频地址，但 aweme.video.play_addr 恰恰就是背景音乐
+        if not music_url:
+            music_url = _first_url(video.get("play_addr"))
+    else:
+        post_video_url = _first_url(video.get("play_addr"))
+        post_video_uri = str((video.get("play_addr") or {}).get("uri") or "")
+        post_duration = int(video.get("duration") or data.get("duration") or 0)
+
     stats = data.get("statistics") or {}
     return DouyinPost(
         aweme_id=str(data.get("aweme_id") or ""),
@@ -410,10 +435,11 @@ def parse_post(data: dict[str, Any]) -> DouyinPost:
         is_image=is_image,
         images=images,
         image_videos=image_videos,
-        video_url=_first_url(video.get("play_addr")),
-        video_uri=str((video.get("play_addr") or {}).get("uri") or ""),
+        music_url=music_url,
+        video_url=post_video_url,
+        video_uri=post_video_uri,
         cover_url=_first_url(video.get("cover")) or _first_url(video.get("origin_cover")),
-        duration_ms=int(video.get("duration") or data.get("duration") or 0),
+        duration_ms=post_duration,
         width=int(video.get("width") or 0),
         height=int(video.get("height") or 0),
         digg_count=int(stats.get("digg_count") or 0),
@@ -446,9 +472,10 @@ class DouyinClient:
 
     设计要点：
     * 每次请求独立生成签名（签名与 URL 强绑定，不可复用）。
-    * **作品列表接口绝不能带 ``publish_video_strategy_type``**——带上它（值为 2 时）
-      接口会返回 ``HTTP 200 + status_code:0`` 但 ``aweme_list`` 为空，看起来像风控，
-      实则参数语义不匹配。这个坑经逐参数隔离实测确认，务必不要"顺手补全参数"。
+    * **作品列表接口必须带 ``publish_video_strategy_type``**（见
+      :meth:`fetch_posts_page`）：不带它时接口只返回视频，图文/图集
+      （``aweme_type=68``）会被整个过滤掉，表现就是「图文从来没被推送过」。
+      早期版本的结论正好相反，那次判断是错的。
     * 成功判定以「是否真的拿到数据」为准，而不是 ``status_code``——风控会返回
       ``200 + status_code:0 + 空内容``。
     """
@@ -605,22 +632,38 @@ class DouyinClient:
 
         返回 ``(作品列表, 下一页游标, 是否还有更多)``。
 
-        注意：这里**刻意不传** ``publish_video_strategy_type``——实测带了它
-        （值 2）会让 ``aweme_list`` 变成空数组，而 ``status_code`` 仍是 0。
-        """
-        data = await self._request(
-            POST_PATH,
-            {
-                "sec_user_id": sec_uid,
-                "count": str(count),
-                "max_cursor": str(max_cursor),
-                "locate_query": "false",
-                "show_live_replay_strategy": "1",
-            },
-            referer=f"{WEB_BASE}/user/{sec_uid}",
-        )
+        **必须带 ``publish_video_strategy_type``**——这是踩了两次的坑：
 
+        * 不带它时，接口只会返回**视频**（``aweme_type=0``），**图文 / 图集
+          （``aweme_type=68``）会被整个过滤掉**。实测某账号主页 54 条作品
+          （8 视频 + 46 图文），不带参数只返回 8 条，带上才返回完整的 54 条。
+          表现就是「图文从来没被推送过」，而且不带 ``has_more`` 还会是 0，
+          看起来像「这个账号作品很少」。
+        * 早期曾误判「带它会清空 ``aweme_list``」，那次结论是错的；现在实测
+          ``1`` 与 ``2`` 行为一致且都完整。为防止个别账号/风控下它反而出问题，
+          这里**加了空列表回退**：带参数拿到空就用不带参数的再请求一次。
+        """
+        base = {
+            "sec_user_id": sec_uid,
+            "count": str(count),
+            "max_cursor": str(max_cursor),
+            "locate_query": "false",
+            "show_live_replay_strategy": "1",
+        }
+        referer = f"{WEB_BASE}/user/{sec_uid}"
+
+        data = await self._request(
+            POST_PATH, {**base, "publish_video_strategy_type": "2"}, referer=referer
+        )
         aweme_list = data.get("aweme_list") or []
+
+        if not aweme_list:
+            # 回退：个别情况下带这个参数会返回空，去掉再试一次
+            fallback = await self._request(POST_PATH, base, referer=referer)
+            if fallback.get("aweme_list"):
+                data = fallback
+                aweme_list = data.get("aweme_list") or []
+
         if not aweme_list:
             # 区分「真的没有作品」和「被软拦截」
             code = data.get("status_code")
@@ -867,7 +910,18 @@ class DouyinClient:
             ) as resp:
                 if resp.status != 200:
                     raise DouyinError(f"HTTP {resp.status}")
-                body = await resp.content.read(max_bytes + 1)
+                # 注意：``StreamReader.read(n)`` 只保证「最多 n 字节」，有多少给多少，
+                # **不会等凑满 n**。直接用它读会把大文件截断（实测 253KB 的动图只拿到
+                # 16KB），所以这里循环读到 EOF 或超出上限为止。
+                chunks: list[bytes] = []
+                got = 0
+                while got <= max_bytes:
+                    piece = await resp.content.read(min(64 * 1024, max_bytes + 1 - got))
+                    if not piece:
+                        break
+                    chunks.append(piece)
+                    got += len(piece)
+                body = b"".join(chunks)
                 if len(body) > max_bytes:
                     raise DouyinError("内容过大")
                 return resp.status, body, resp.headers.get("Content-Type", "")

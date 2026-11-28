@@ -22,6 +22,7 @@ import base64
 import re
 import time
 import urllib.parse
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 try:  # AstrBot 自带 quart
@@ -967,16 +968,22 @@ class PageApi:
             except Exception as exc:
                 logger.error(f"[抖音订阅] 预览组装失败：{exc}")
                 continue
-            previews.append(
-                {
-                    "post": post.to_public_dict(),
-                    "plan": plan.describe(),
-                    "chain": self._describe_chain(plan.chain),
-                    # 命中屏蔽关键词的作品不会真的推送，预览里标出来，
-                    # 免得用户以为订阅漏了
-                    "blocked_keyword": opt.matched_keyword(post.desc),
-                }
-            )
+            entry = {
+                "post": post.to_public_dict(),
+                "plan": plan.describe(),
+                "chain": self._describe_chain(plan.chain),
+                # 命中屏蔽关键词的作品不会真的推送，预览里标出来，
+                # 免得用户以为订阅漏了
+                "blocked_keyword": opt.matched_keyword(post.desc),
+            }
+            # 动态图文：附一段可播放的样片（data URI，绕开 CDN 的 Referer/IP 限制）。
+            # 只给前 3 条装，避免一次预览返回几十 MB。
+            if post.is_live and len(previews) < 3:
+                sample, kind = await self._live_sample_data_uri(plugin, post, plan)
+                if sample:
+                    entry["live_sample"] = sample
+                    entry["live_sample_kind"] = kind   # merged=真正的合并产物 / clip=单段样片
+            previews.append(entry)
 
         if not previews:
             return self._fail("组装预览失败，请查看 AstrBot 日志")
@@ -1010,6 +1017,50 @@ class PageApi:
             "cover_on_fallback": opt.cover_on_fallback,
             "prefer_no_watermark": opt.prefer_no_watermark,
         }
+
+    @staticmethod
+    async def _live_sample_data_uri(
+        plugin, post, plan=None, max_bytes: int = 12 * 1024 * 1024
+    ) -> tuple[str, str]:
+        """给 WebUI 预览准备一段**能直接播**的视频，返回 ``(data_uri, 来源说明)``。
+
+        * 合并模式（``plan.media_kind == "video"``）→ 直接返回**真正合并出来的那个 MP4**
+          （``push_builder`` 已经把产物落在 ``plan.local_paths`` 里），预览所见即所得。
+        * 其它情况 → 取第一段动图当样片。
+
+        为什么一律转 data URI：实测抖音视频 CDN **会拒绝 Referer 不是抖音的请求**
+        （插件页挂在 AstrBot 面板域名下，于是 403），部分情况下还按 IP 签权。
+        转成 data URI 就完全绕开——服务端用正确的 Cookie/Referer 取回字节，浏览器直接播。
+        """
+        # 1) 合并产物（本地文件，读出来即可，不用再请求抖音）
+        if plan is not None and getattr(plan, "media_kind", "") == "video":
+            for path in reversed(getattr(plan, "local_paths", None) or []):
+                if not str(path).endswith(".mp4"):
+                    continue
+                try:
+                    raw = Path(path).read_bytes()
+                except OSError:
+                    continue
+                if len(raw) <= max_bytes and raw[4:8] == b"ftyp":
+                    return f"data:video/mp4;base64,{base64.b64encode(raw).decode()}", "merged"
+
+        # 2) 退而求其次：第一段动图的样片
+        urls = post.live_videos
+        if not urls:
+            return "", ""
+        try:
+            code, body, ctype = await plugin._client_or_raise().fetch_bytes(
+                urls[0], max_bytes=min(max_bytes, 4 * 1024 * 1024)
+            )
+        except Exception as exc:
+            logger.debug(f"[抖音订阅] 预览取动图样片失败：{exc}")
+            return "", ""
+        if code != 200 or not body:
+            return "", ""
+        mime = (ctype or "").split(";")[0].strip() or "video/mp4"
+        if not mime.startswith("video/"):
+            mime = "video/mp4"
+        return f"data:{mime};base64,{base64.b64encode(body).decode()}", "clip"
 
     @staticmethod
     def _pick_unblocked(

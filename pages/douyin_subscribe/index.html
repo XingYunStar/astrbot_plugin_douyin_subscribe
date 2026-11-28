@@ -741,7 +741,8 @@
           + `<div>${esc(f.name || "video.mp4")}</div>`
           + `<div class="meta">作为群文件上传</div></div></div>`;
       } else if (card) {
-        // 图文 / 动态图文 → 群聊聊天记录卡片（合并转发）
+        // 群聊聊天记录卡片（合并转发）：普通图文放图片，动态图文放动图视频
+        const isLiveCard = liveCount > 0;
         html += `<div style="border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:10px">`
           + `<div style="background:var(--soft);padding:8px 10px;font-size:13px;font-weight:600">`
           + `📋 ${esc(card.title || "群聊聊天记录")}　`
@@ -752,19 +753,51 @@
             `<img data-url="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" alt="" onerror="this.style.opacity=.3">`).join("") + `</div>`;
           if (imgCount > 12) html += `<div class="meta">…共 ${imgCount} 张</div>`;
         }
+        // 动态图文：卡片里实际是视频，拿第一段做个可播放样片
+        // 优先用后端取回的 data URI：抖音视频 CDN 会 403 掉非抖音 Referer / 非同 IP 的请求，
+        // 直链在浏览器里放不出来
+        const sample = pv.live_sample || (p.live_videos && p.live_videos[0]) || "";
+        if (isLiveCard && sample) {
+          html += `<video controls preload="metadata" playsinline data-url="${esc(sample)}"`
+            + ` referrerpolicy="no-referrer" style="max-width:100%;border-radius:8px;margin-top:8px"></video>`;
+        }
         html += `</div></div>`;
-        if (liveCount) {
-          const merged = videoSegs === 1 && liveCount > 1;
+        if (isLiveCard) {
           html += `<div class="meta" style="color:var(--ok,#2a9d5c);margin-top:6px">`
-            + (merged
-                ? `🎞 动态图文：${liveCount} 段动图已合并为 1 个视频发送`
-                : `🎞 动态图文：附带 ${liveCount} 段动图，将逐条发送 ${videoSegs} 条视频`)
+            + `🎞 动态图文：卡片里放的是 ${liveCount} 段动图（视频），不是静态图。`
+            + (sample
+                ? (pv.live_sample_kind === "merged" ? `上面播放的是合并后的视频` : `上面播放的是第 1 段样片`)
+                : ``)
+            + `；想只发一个合并视频，请勾选「动态图文：把动图合并成一个视频」`
             + `</div>`;
         } else if (imgCount) {
           html += `<div class="meta" style="margin-top:6px">🖼 图文：文本与 ${imgCount} 张图都在同一张卡片里</div>`;
         }
       } else if (hasVideo) {
-        html += `<video controls preload="none" data-url="${esc(p.no_watermark_url || p.video_url)}" referrerpolicy="no-referrer"></video>`;
+        // 动态图文 + 合并开：不组卡片，只发这一个视频
+        if (liveCount) {
+          // 合并后的 MP4 在服务端临时目录里，浏览器拿不到；这里用第 1 段动图做样片，
+          // 既能看到真实内容、又能正常播放（原作品的 video_url 对动态图文是无效的）
+          // 优先用后端取回的 data URI：抖音视频 CDN 会 403 掉非抖音 Referer / 非同 IP 的请求，
+        // 直链在浏览器里放不出来
+        const sample = pv.live_sample || (p.live_videos && p.live_videos[0]) || "";
+          const sKind = pv.live_sample_kind || "clip";
+          html += `<div class="meta" style="color:var(--ok,#2a9d5c);margin-bottom:6px">`
+            + `🎞 动态图文：${liveCount} 段动图已合并为 1 个视频，<b>不发聊天记录卡片</b>`
+            + (sample
+                ? (sKind === "merged"
+                    ? `（下面播放的<b>就是实际发出的那个合并视频</b>，含背景音乐，约 ${plan.video_size_mb || 0}MB）`
+                    : `（下面播放的是第 1 段样片；实际发出的是 ${liveCount} 段合并后的一个视频）`)
+                : ``)
+            + `</div>`;
+          if (sample) {
+            html += `<video controls preload="metadata" playsinline data-url="${esc(sample)}" referrerpolicy="no-referrer"></video>`;
+          } else {
+            html += `<video controls preload="none" data-url="${esc(p.no_watermark_url || p.video_url)}" referrerpolicy="no-referrer"></video>`;
+          }
+        } else {
+          html += `<video controls preload="none" data-url="${esc(p.no_watermark_url || p.video_url)}" referrerpolicy="no-referrer"></video>`;
+        }
       } else if (imgCount && !plan.degraded) {
         html += `<div class="imgs">` + p.images.slice(0, 12).map(u =>
           `<img data-url="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" alt="" onerror="this.style.opacity=.3">`).join("") + `</div>`;

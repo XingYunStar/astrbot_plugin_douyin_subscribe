@@ -347,17 +347,56 @@ class PushBuilder:
         force_link: bool,
         plain: bool = False,
     ) -> None:
-        """图文 / 动态图文 → 一张「群聊聊天记录」卡片（合并转发）。
+        """图文 / 动态图文的消息组装。
 
-        文本和全部图片都放进卡片里，群里只看到一张卡片，而不是被 15 条图片刷屏。
+        三种形态，取决于作品类型与「把动图合并成一个视频」开关：
 
-        ``plain=True`` 时不组卡片、改为逐张追加图片——协议端不支持 ``node`` 段
+        * **普通图文** → 一张「群聊聊天记录」卡片，里面是**图片**
+        * **动态图文 + 合并关** → 一张卡片，里面是**动图（视频）**，不是静态图
+        * **动态图文 + 合并开** → **不发卡片**，直接把合并后的那一个视频发出去
+
+        ``plain=True`` 时不组卡片、改为逐张追加——协议端不支持 ``node`` 段
         （卡片发不出去）时由 ``_push_post`` 走这条降级路径。
         """
         if force_link:
             self._append_link_line(lines, post, opt)
             plan.media_kind = "link"
             return
+
+        # ---- 动态图文：卡片里要放动图（视频），而不是静态图 ----
+        if post.is_live:
+            if opt.merge_live:
+                merged = await self._build_live_videos(post, opt, plan, notes)
+                if merged:
+                    # 合并模式：不用卡片，就发这一个视频（文本走外层 Plain）
+                    plan.media_kind = opt.video_mode if opt.video_mode == "file" else "video"
+                    plan.media_count = len(merged)
+                    plan.live_count = len(merged)
+                    media.extend(merged)
+                    return
+
+            clips: list[Any] = []
+            for url in post.live_videos:
+                comp = await self._make_live_item(url, plan, notes)
+                if comp is not None:
+                    clips.append(comp)
+
+            if clips:
+                if plain:
+                    plan.media_kind = "video"
+                    plan.media_count = len(clips)
+                    plan.live_count = len(clips)
+                    media.extend(clips)
+                    notes.append("已退回逐段发送（合并转发卡片不可用）")
+                    return
+                media.append(self._make_card(post, lines, clips))
+                plan.text_in_card = True
+                plan.media_kind = "card"
+                plan.media_count = len(clips)
+                plan.live_count = len(clips)
+                return
+
+            notes.append("未取到动图，卡片里改放静态图")
 
         # 1) 图片：卡片里的图片会被 base64 内联，所以先降分辨率再压 JPEG
         images: list[Any] = []
@@ -381,26 +420,19 @@ class PushBuilder:
             plan.media_kind = "link"
             return
 
-        # 2) 动图（MP4）：默认逐段发送，开启合并后拼成一个
-        videos = await self._build_live_videos(post, opt, plan, notes)
-
         if plain:
             # 降级：卡片发不出去，退回逐张发送（文本仍走外层 Plain）
             plan.media_kind = "image"
             plan.media_count = len(images)
-            plan.live_count = len(videos)
             media.extend(images)
-            media.extend(videos)
             notes.append("已退回逐张发送（合并转发卡片不可用）")
             return
 
-        # 3) 组装卡片：先一条文本节点，再每张图一个节点
+        # 2) 组装卡片：先一条文本节点，再每张图一个节点
         media.append(self._make_card(post, lines, images))
         plan.text_in_card = True
         plan.media_kind = "card"
         plan.media_count = len(images)
-        plan.live_count = len(videos)
-        media.extend(videos)
 
     def _make_card(
         self, post: DouyinPost, lines: list[str], images: list[Any]
@@ -423,50 +455,74 @@ class PushBuilder:
         * ``merge_live`` 开启 → 用 ffmpeg 把全部动图拼成**一个**视频
 
         合并失败会自动退回逐段发送，不会因此丢掉动图。
+
+        **没有文件服务时（``callback_api_base`` 未配置）只能用直链**：本地文件
+        是插件自己下载的，平台（NapCat 等独立容器）读不到那个路径，会报
+        ``ENOENT: no such file or directory``。这种情况下合并也没意义（产物是
+        本地文件），所以直接跳过合并、按原始 CDN 直链逐段发。
         """
         clips = post.live_videos
         if not clips:
             return []
 
         cap = opt.size_limit_mb * MB if opt.size_limit_mb else 0
+        can_local = self.file_service_ready()
 
         if opt.merge_live:
-            try:
-                merged = await self._merge_live_clips(clips)
-                if merged:
-                    plan.local_paths.append(merged)
-                    notes.append(f"已将 {len(clips)} 段动图合并为一个视频")
-                    return [Video.fromFileSystem(merged)]
-            except Exception as exc:
-                notes.append(f"动图合并失败（{exc}），改为逐段发送")
+            if not can_local:
+                notes.append(
+                    "未配置 callback_api_base，合并后的视频无法交给平台，"
+                    "改为逐段直链发送（配置它之后即可合并）"
+                )
+            else:
+                try:
+                    merged, bgm_note = await self._merge_live_clips(
+                        clips, bgm_url=post.music_url
+                    )
+                    if merged:
+                        plan.local_paths.append(merged)
+                        notes.append(f"已将 {len(clips)} 段动图合并为一个视频")
+                        if bgm_note:
+                            notes.append(bgm_note)
+                        return [Video.fromFileSystem(merged)]
+                except Exception as exc:
+                    notes.append(f"动图合并失败（{exc}），改为逐段发送")
 
         out: list[Any] = []
         for url in clips:
-            try:
-                path = await self._localize(url, max_bytes=cap)
-                plan.local_paths.append(path)
-                out.append(Video.fromFileSystem(path))
-            except DouyinError as exc:
-                notes.append(f"动图下载失败（{exc}），已跳过")
+            if can_local:
+                try:
+                    path = await self._localize(url, max_bytes=cap)
+                    plan.local_paths.append(path)
+                    out.append(Video.fromFileSystem(path))
+                    continue
+                except DouyinError as exc:
+                    notes.append(f"动图下载失败（{exc}），改发直链")
+            # 没有文件服务 → 直接把 CDN 直链交给平台去拉
+            out.append(Video.fromURL(url))
         if out and not opt.merge_live:
             notes.append(f"本条为动态图文，附带 {len(out)} 段动图（逐段发送）")
         return out
 
-    async def _merge_live_clips(self, urls: list[str]) -> str | None:
-        """下载全部动图并用 ffmpeg 拼成一个 MP4，返回本地路径。
+    async def _merge_live_clips(
+        self, urls: list[str], bgm_url: str = ""
+    ) -> tuple[str | None, str]:
+        """下载全部动图并用 ffmpeg 拼成一个 MP4。
 
-        分三级策略，从最省到最保险：
+        返回 ``(本地路径, 附加说明)``；失败抛异常由调用方退回逐段发送。
 
-        1. **无损直拼**（首选）：各段规格（编码/分辨率/帧率）完全一致时，
-           用 concat demuxer + ``-c copy`` 直接拼接——不重编码，几秒搞定，
-           体积与原文件合计相同。实测一条 15 段的动态图文 3.2MB → 3.2MB。
-        2. **重编码拼接**：规格不一致时才统一 scale+pad 到固定画布再拼。
-           先按「全部有音轨」试一次，失败再退回纯视频拼接——既不丢声音，
-           又不会因为某段没音轨就整条失败。
-        3. 全都失败 → 抛异常，由调用方退回逐段发送。
+        策略从最省到最保险：
+
+        1. **无损直拼**：各段规格（编码/分辨率/帧率）完全一致时，用 concat
+           demuxer + ``-c copy`` 直接拼接——不重编码，秒级，体积不变。
+           **有背景音乐时跳过这一步**：要换音轨就必须重编码。
+        2. **重编码拼接**：统一 scale+pad 到固定画布后拼；有背景音乐时把 BGM
+           作为整段音轨（比视频短就循环、比视频长就裁到视频长度），
+           原各段的音轨丢弃——这也是抖音里实际听到的效果。
+        3. 全都失败 → 抛异常。
         """
         if not urls:
-            return None
+            return None, ""
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise DouyinError("未安装 ffmpeg，无法合并动图")
@@ -483,22 +539,51 @@ class PushBuilder:
 
         out = self.tmp_dir / f"{stem}.mp4"
 
-        # 1) 规格一致 → 无损直拼
-        sigs = [await self._probe_video_sig(p) for p in inputs]
-        if all(sigs) and len(set(sigs)) == 1:
-            if await self._run_ffmpeg_copy(ffmpeg, inputs, str(out)):
-                self._dbg(f"动图已无损拼接：{out.name}（{len(inputs)} 段）")
-                return str(out)
-            self._dbg("无损拼接失败，改用重编码")
+        # 合并成功后源片段就没用了，立刻删掉——否则一条 15 张图的动态图文会
+        # 在 media_tmp 里留下 15 个中间文件，攒几百个就是上百 MB
+        # （这些片段不用等 cleanup_tmp 的一小时，删除它们也不影响已经合并好的产物）。
+        def _drop_sources() -> None:
+            for path in inputs:
+                Path(path).unlink(missing_ok=True)
+
+        # 背景音乐：先下到本地，后面作为整段音轨
+        bgm_path = ""
+        bgm_note = ""
+        if bgm_url:
+            try:
+                bgm_dest = self.tmp_dir / f"{stem}_bgm.mp3"
+                await self.client.download_to(bgm_url, bgm_dest, max_bytes=50 * MB)
+                bgm_path = str(bgm_dest)
+            except DouyinError as exc:
+                bgm_note = f"背景音乐下载失败（{exc}），改用动图自带的音轨"
+
+        # 有 BGM 时必须重编码（换音轨没法 -c copy），所以跳过无损直拼
+        if not bgm_path:
+            sigs = [await self._probe_video_sig(p) for p in inputs]
+            if all(sigs) and len(set(sigs)) == 1:
+                if await self._run_ffmpeg_copy(ffmpeg, inputs, str(out)):
+                    self._dbg(f"动图已无损拼接：{out.name}（{len(inputs)} 段）")
+                    _drop_sources()
+                    return str(out), bgm_note
+                self._dbg("无损拼接失败，改用重编码")
 
         # 2) 重编码拼接
         for with_audio in (True, False):
-            if await self._run_ffmpeg_concat(ffmpeg, inputs, str(out), with_audio):
+            if await self._run_ffmpeg_concat(
+                ffmpeg, inputs, str(out), with_audio, bgm=bgm_path
+            ):
                 self._dbg(
                     f"动图已合并（重编码）：{out.name}（{len(inputs)} 段，"
-                    f"{out.stat().st_size / 1024:.0f}KB）"
+                    f"{out.stat().st_size / 1024:.0f}KB"
+                    f"{'，已带背景音乐' if bgm_path else ''}）"
                 )
-                return str(out)
+                if bgm_path:
+                    Path(bgm_path).unlink(missing_ok=True)
+                    bgm_note = "已把作品背景音乐与动图原声混音（两者都保留）"
+                _drop_sources()
+                return str(out), bgm_note
+        if bgm_path:
+            Path(bgm_path).unlink(missing_ok=True)
         raise DouyinError("ffmpeg 合并动图失败")
 
     async def _probe_video_sig(self, path: str) -> str:
@@ -539,11 +624,24 @@ class PushBuilder:
         return code == 0 and Path(out).exists() and Path(out).stat().st_size > 0
 
     async def _run_ffmpeg_concat(
-        self, ffmpeg: str, inputs: list[str], out: str, with_audio: bool
+        self,
+        ffmpeg: str,
+        inputs: list[str],
+        out: str,
+        with_audio: bool,
+        bgm: str = "",
     ) -> bool:
-        """调用 ffmpeg 把多段视频统一规格后拼接。返回是否成功。"""
+        """调用 ffmpeg 把多段视频统一规格后拼接。返回是否成功。
+
+        ``bgm`` 非空时：``with_audio=True`` 把**动图自身的音轨**与背景音乐
+        **混音**（``amix``，两者都保留）；``with_audio=False`` 则只用背景音乐。
+        BGM 用 ``-stream_loop -1`` 循环，``amix`` 的 ``duration=first`` 让它跟着
+        视频长度走，不会比画面长。
+        """
         w, h = LIVE_CANVAS
         n = len(inputs)
+        # 动图自身是否提供音轨
+        use_clip_audio = with_audio
         parts: list[str] = []
         labels: list[str] = []
         for i in range(n):
@@ -551,7 +649,7 @@ class PushBuilder:
                 f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={LIVE_FPS}[v{i}]"
             )
-            if with_audio:
+            if use_clip_audio:
                 parts.append(
                     f"[{i}:a]aresample=44100,"
                     f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}]"
@@ -559,18 +657,39 @@ class PushBuilder:
                 labels.append(f"[v{i}][a{i}]")
             else:
                 labels.append(f"[v{i}]")
-        if with_audio:
+        if use_clip_audio:
             parts.append(
                 "".join(labels) + f"concat=n={n}:v=1:a=1[vo][ao]"
             )
         else:
             parts.append("".join(labels) + f"concat=n={n}:v=1:a=0[vo]")
 
+        if bgm and use_clip_audio:
+            # 动图音轨 + 背景音乐混在一起：两个都保留，长度跟视频走
+            parts.append(
+                f"[{n}:a]aresample=44100,"
+                "aformat=sample_fmts=fltp:channel_layouts=stereo[bgm]"
+            )
+            parts.append(
+                "[ao][bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
+            )
+
         cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
         for path in inputs:
             cmd += ["-i", path]
+        bgm_index = -1
+        if bgm:
+            # 背景音乐作为最后一个输入；比视频短就循环、比视频长就被 -shortest 裁掉
+            bgm_index = len(inputs)
+            cmd += ["-stream_loop", "-1", "-i", bgm]
         cmd += ["-filter_complex", ";".join(parts), "-map", "[vo]"]
-        if with_audio:
+        if bgm_index >= 0 and with_audio:
+            # 混音后的音轨
+            cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k", "-shortest"]
+        elif bgm_index >= 0:
+            # 动图没有音轨 → 只用背景音乐
+            cmd += ["-map", f"{bgm_index}:a", "-c:a", "aac", "-b:a", "128k", "-shortest"]
+        elif with_audio:
             cmd += ["-map", "[ao]", "-c:a", "aac", "-b:a", "96k"]
         else:
             cmd += ["-an"]
@@ -816,6 +935,28 @@ class PushBuilder:
                 if force_local:
                     return None      # 卡片必须用本地 JPEG，退回 WebP 会 921
         return Image.fromURL(url)
+
+    async def _make_live_item(
+        self, clip_url: str, plan: PushPlan, notes: list[str]
+    ) -> Any | None:
+        """把一个动图做成能放进「合并转发卡片」的 Video 段。
+
+        ``Node.to_dict()`` 只把 **Image / Record** 转成 base64；视频段是原样输出
+        ``file`` 字段的，本地路径（``file:///...``）平台容器根本读不到。所以这里
+        先把动图下载到本地、再注册到 AstrBot 文件服务，换成 HTTP 地址让平台来拉；
+        没有文件服务时退回抖音 CDN 直链。
+        """
+        if not clip_url:
+            return None
+        if self.file_service_ready():
+            try:
+                path = await self._localize(clip_url, max_bytes=0)
+                plan.local_paths.append(path)
+                url = await Video.fromFileSystem(path).register_to_file_service()
+                return Video(file=url)
+            except Exception as exc:
+                notes.append(f"动图注册文件服务失败（{exc}），改发直链")
+        return Video.fromURL(clip_url)
 
     async def _localize(self, url: str, max_bytes: int) -> str:
         """带 Cookie 把视频下载到本地临时文件，返回路径。
