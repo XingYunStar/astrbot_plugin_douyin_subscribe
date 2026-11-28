@@ -2,7 +2,8 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.25-ff69b4)](https://github.com/AstrBotDevs/AstrBot)
 ![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-aiocqhttp-blue)
-![版本](https://img.shields.io/badge/version-v1.0.3-blue)
+![版本](https://img.shields.io/badge/version-v1.2.1-blue)
+[![更新日志](https://img.shields.io/badge/%E6%9B%B4%E6%96%B0%E6%97%A5%E5%BF%97-CHANGELOG-orange)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 # 抖音订阅推送
@@ -14,6 +15,8 @@
 </div>
 
 ---
+
+> 完整版本变更记录见 **[CHANGELOG.md](CHANGELOG.md)**。
 
 ## 📖 简介
 
@@ -420,6 +423,7 @@ astrbot_plugin_douyin_subscribe/
 ├── _conf_schema.json              # 插件配置定义
 ├── metadata.yaml                  # 插件元信息
 ├── requirements.txt               # 无第三方依赖
+├── CHANGELOG.md                   # 更新日志
 ├── pages/douyin_subscribe/        # WebUI 页面（单文件内联）
 └── .github/img/webui.png          # README 效果图
 ```
